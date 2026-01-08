@@ -1,0 +1,49 @@
+#############################################
+# Optional Small Compute Instance (Private) #
+#############################################
+
+# Select latest Oracle Linux image compatible with the chosen shape when compute_image_ocid is not provided
+data "oci_core_images" "ol_compatible" {
+  compartment_id         = var.compartment_ocid
+  operating_system       = "Oracle Linux"
+  shape                  = var.compute_shape
+  sort_by                = "TIMECREATED"
+  sort_order             = "DESC"
+}
+
+# Compute instance in the same private subnet as PostgreSQL (no public IP by default)
+resource "oci_core_instance" "app_host" {
+  count                = var.create_compute == true ? 1 : 0
+  availability_domain  = data.oci_identity_availability_domain.US-ASHBURN-AD-1.name
+  compartment_id       = var.compartment_ocid
+  display_name         = var.compute_display_name
+  shape                = var.compute_shape
+
+  # For Flex shapes (default is VM.Standard.E4.Flex). If a non-Flex shape is used this block may cause a validation error.
+  shape_config {
+    ocpus         = var.compute_ocpus
+    memory_in_gbs = var.compute_memory_in_gbs
+  }
+
+  create_vnic_details {
+    assign_public_ip = var.compute_assign_public_ip
+    subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1-psql-priv-subnet[0].id : var.psql_subnet_ocid
+    nsg_ids          = var.compute_nsg_ids
+  }
+
+  source_details {
+    source_type               = "image"
+    source_id                 = var.compute_image_ocid != "" ? var.compute_image_ocid : data.oci_core_images.ol_compatible.images[0].id
+    boot_volume_size_in_gbs   = var.compute_boot_volume_size_in_gbs
+  }
+
+  metadata = {
+    ssh_authorized_keys = var.compute_ssh_public_key
+  }
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "60m"
+  }
+}
