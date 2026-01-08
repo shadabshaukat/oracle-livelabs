@@ -77,8 +77,13 @@ variable "psql_shape_name" {
 }
 
 variable "psql_iops" {
-  type = number
-  default = 75000
+  type = map(number)
+  default = {
+    75  = 75000
+    150 = 150000
+    225 = 225000
+    300 = 300000
+  }
 }
 
 # variable "psql_passwd_type" { default = "PLAIN_TEXT" }
