@@ -40,6 +40,7 @@ The following inputs are consumed by the stack. When creating a Stack in ORM, yo
 Required/common:
 - compartment_ocid: Compartment OCID for all resources
 - region: Region to deploy into (default: us-ashburn-1)
+- tenancy_ocid: Tenancy OCID used for AD discovery (optional; if omitted, compartment_ocid is used)
 
 Networking:
 - create_vcn_subnet: Whether to create a new VCN and private subnet (default: true)
@@ -53,7 +54,7 @@ Vault/KMS:
 
 PostgreSQL:
 - psql_admin: Admin username for the PostgreSQL service (no default; required)
-- psql_version: PostgreSQL version (default: 14)
+- psql_version: PostgreSQL version (default: 16)
 - inst_count: Number of DB instances (default: 1)
 - num_ocpu: OCPU count for PostgreSQL (default: 2)
 - psql_shape_name: PostgreSQL shape family name (default: "PostgreSQL.VM.Standard.E4.Flex"). Use with num_ocpu to determine capacity; memory is derived as num_ocpu × 16 GB.
@@ -63,8 +64,8 @@ Compute (optional small instance added with this iteration):
 - create_compute: Whether to create a compute instance (default: false)
 - compute_shape: Compute shape (default: "VM.Standard.E4.Flex")
 - compute_ocpus: OCPU count (default: 1)
-- compute_memory_in_gbs: Memory in GB (default: 6)
-- compute_assign_public_ip: Assign public IP to VNIC (default: false). The subnet is private and disallows public IPs by default; set this true only if you attach to a public subnet you provide.
+- compute_memory_in_gbs: Memory in GB (default: 8)
+- compute_assign_public_ip: Assign public IP to VNIC (default: false). If this stack creates the subnet (create_vcn_subnet=true), public IPs are prohibited and this will be forced to false. If you use an existing subnet (create_vcn_subnet=false), this flag is honored but must be compatible with that subnet’s settings.
 - compute_display_name: Display name (default: "app-host-1")
 - compute_ssh_public_key: SSH public key for opc user (default: ""). Required for instance SSH access.
 - compute_image_ocid: Optional image OCID to use; if blank the latest Oracle Linux image compatible with the shape will be selected automatically.
@@ -73,6 +74,7 @@ Compute (optional small instance added with this iteration):
 Notes:
 - If create_vcn_subnet=false, provide psql_subnet_ocid of an existing private subnet to place both the PostgreSQL service and the compute instance.
 - Access to the compute instance in a private subnet typically requires Bastion service, VPN/DRG, or peering. The default security list allows inbound SSH (22), but the subnet prohibits public IPs, so there is no public internet ingress to the instance unless you change the design.
+- Availability Domains are discovered dynamically for the selected region and the first available AD is used. This avoids failures in regions with a single AD or differing AD counts.
 
 ## Outputs
 
@@ -115,7 +117,7 @@ If you created the stack prior to this iteration and want to add the compute ins
 - In Stack variables:
   - Set create_compute=true
   - Provide your compute_ssh_public_key (contents of ~/.ssh/id_rsa.pub or similar)
-  - Adjust compute_shape / compute_ocpus / compute_memory_in_gbs if needed (defaults: VM.Standard.E4.Flex, 1 OCPU, 6 GB)
+  - Adjust compute_shape / compute_ocpus / compute_memory_in_gbs if needed (defaults: VM.Standard.E4.Flex, 1 OCPU, 8 GB)
 - Run Plan and then Apply in Resource Manager
 
 The compute instance is created in the same private subnet as PostgreSQL by default. For public access you would need a public subnet, a different design, or Bastion.

@@ -14,7 +14,7 @@ data "oci_core_images" "ol_compatible" {
 # Compute instance in the same private subnet as PostgreSQL (no public IP by default)
 resource "oci_core_instance" "app_host" {
   count                = var.create_compute == true ? 1 : 0
-  availability_domain  = data.oci_identity_availability_domain.US-ASHBURN-AD-1.name
+  availability_domain  = data.oci_identity_availability_domains.ads.availability_domains[0].name
   compartment_id       = var.compartment_ocid
   display_name         = var.compute_display_name
   shape                = var.compute_shape
@@ -26,7 +26,9 @@ resource "oci_core_instance" "app_host" {
   }
 
   create_vnic_details {
-    assign_public_ip = var.compute_assign_public_ip
+    # If we create the private subnet in this stack, force no public IP (subnet prohibits public IPs).
+    # If using an existing subnet (create_vcn_subnet=false), honor the user-provided flag.
+    assign_public_ip = var.create_vcn_subnet == true ? false : var.compute_assign_public_ip
     subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1-psql-priv-subnet[0].id : var.psql_subnet_ocid
     nsg_ids          = var.compute_nsg_ids
   }

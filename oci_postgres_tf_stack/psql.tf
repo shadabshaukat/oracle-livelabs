@@ -46,7 +46,7 @@ resource oci_psql_db_system psql_inst_1 {
    shape = var.psql_shape_name
   
   storage_details {
-    availability_domain   = data.oci_identity_availability_domain.US-ASHBURN-AD-1.name
+    availability_domain   = data.oci_identity_availability_domains.ads.availability_domains[0].name
     iops                  = var.psql_iops[75]
     is_regionally_durable = "false"
     system_type           = "OCI_OPTIMIZED_STORAGE"

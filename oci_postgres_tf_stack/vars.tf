@@ -7,6 +7,12 @@ variable "compartment_ocid" {
   type = string
 }
 
+variable "tenancy_ocid" {
+  type        = string
+  description = "Tenancy OCID (used for AD discovery). If empty, compartment_ocid is used."
+  default     = ""
+}
+
 ## Network
 
 variable "create_service_gateway" {
@@ -46,12 +52,12 @@ variable "vault_id" {
 
 variable "psql_admin" {
   type        = string
-  description = "Name of PostgreSQL admin user"
+  description = "Name of PostgreSQL admin username"
 }
 
 variable "psql_version" {
   type    = number
-  default = 14
+  default = 16
 }
 
 variable "inst_count" {
@@ -71,12 +77,9 @@ variable "psql_shape_name" {
 }
 
 variable "psql_iops" {
-  type = map(number)
+  type = number
   default = {
-    75  = 75000
-    150 = 150000
-    225 = 225000
-    300 = 300000
+75000
   }
 }
 
@@ -101,7 +104,7 @@ variable "compute_ocpus" {
 
 variable "compute_memory_in_gbs" {
   type    = number
-  default = 6
+  default = 8
 }
 
 variable "compute_assign_public_ip" {

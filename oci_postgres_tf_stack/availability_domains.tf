@@ -1,12 +1,5 @@
-data oci_identity_availability_domain US-ASHBURN-AD-1 {
-  compartment_id = var.compartment_ocid
-  ad_number      = "1"
-}
-data oci_identity_availability_domain US-ASHBURN-AD-2 {
-  compartment_id = var.compartment_ocid
-  ad_number      = "2"
-}
-data oci_identity_availability_domain US-ASHBURN-AD-3 {
-  compartment_id = var.compartment_ocid
-  ad_number      = "3"
+# Dynamically discover available Availability Domains for the target region/tenancy.
+# This avoids hard-coding AD-1/2/3 which can fail in single-AD regions or regions with different AD counts.
+data "oci_identity_availability_domains" "ads" {
+  compartment_id = coalesce(var.tenancy_ocid, var.compartment_ocid)
 }
