@@ -10,21 +10,12 @@ resource oci_psql_db_system psql_inst_1 {
   #admin_username = var.psql_admin
   #credentials =  random_string.psql_admin_password.result 
   credentials {
-        #Required
-        password_details {
-            #Required
-            
-            #password_type = var.psql_passwd_type == "PLAIN_TEXT"  ?   "PLAIN_TEXT" : "VAULT_SECRET"
-            password_type = "VAULT_SECRET"
-            #password =  random_string.psql_admin_password.result
-            
-            #Optional
-           # password = var.db_system_credentials_password_details_password
-             secret_id = oci_vault_secret.psql_secret.id 
-            secret_version = 1
-        }
-        username = var.psql_admin
+    password_details {
+      password_type = "PLAIN_TEXT"
+      password      = local.psql_admin_password
     }
+    username = var.psql_admin
+  }
 
   description = "Postgres SQL Instance"
   display_name = "psql_inst_1"

@@ -1,22 +1,88 @@
-# oci_example_postgres
-This respositry is  to help  deploy  Oracle Postgres SQL services on Oracle cloud Infrastructre (OCI) .
+# OCI PostgreSQL Terraform Stack (Resource Manager ready)
 
-This code would deploy  following components :
-   1. Oracle  Virtual Cloud Network  (VCN) wth a Private Subnet 
-   2. OCI Postgres SQL service using the Private subnet
-   3. OCI  KMS Vault,Key,Secret ( for psql admin password )
+This module deploys:
+- VCN with:
+  - Private subnet for PostgreSQL
+  - Public subnet for Compute (with Internet Gateway and route table)
+  - Optional Service Gateway (for OSN access, e.g., backups)
+  - NAT Gateway for private egress
+- Network Security:
+  - Default Security List permits SSH (tcp/22)
+  - NSG for PostgreSQL permitting tcp/5432 only from within the VCN CIDR
+- OCI PostgreSQL DB System:
+  - Shape family via psql_shape_name and OCPUs via num_ocpu
+  - Admin user from psql_admin
+  - Admin password provided via variable or auto-generated (no Vault)
+- Optional Compute Instance:
+  - In the public subnet by default
+  - Public IP attachment controlled by compute_assign_public_ip
 
-  You can control the  creation of VCN/Subnets and pass a existing private subnet ID as well.
-  As of now the Code creates OCI KMS Secrets to store the psql admin password and it can be retrived from secret post creation .
-  Postgres SQL instance gets created with replicas if the inst-count  > 1 .
-  Currently the Instance shapes are limited to AMD  with OCPUs 2,4,8,16,32,64 and Memory = > #OCPU  * 16
+Region-agnostic:
+- Availability Domain is discovered dynamically (no hard-coded AD-1/2/3)
 
-  Known Issues: 
+## Inputs
 
+Core
+- compartment_ocid (string): Target compartment OCID
+- region (string): Target region (default: us-ashburn-1)
+- tenancy_ocid (string, optional): If provided, used for AD discovery; else compartment_ocid is used
 
-    Known Issues: 
-    1. The OCI KMS Vault/Key creation can fail  with below error :
+Networking
+- create_vcn_subnet (bool, default true): Create VCN, subnets, gateways, route tables
+- create_service_gateway (bool, default true): Create Service Gateway
+- vcn_cidr (list(string), default ["10.10.0.0/16"]): VCN CIDR(s)
+- psql_subnet_ocid (string, default ""): Existing private subnet OCID when create_vcn_subnet=false (used for both PG and compute if you choose)
 
-  Error: Post "https://xyzxyzxzyxy-management.kms.us-ashburn-1.oraclecloud.com/20180608/keys": dial tcp: lookup xyzxyzxzyxy-management.kms.us-ashburn-1.oraclecloud.com on 169.254.169.254:53: no such host
+Credentials
+- psql_admin (string): PostgreSQL admin username (required)
+- psql_admin_password (string, sensitive, default ""): Optional plaintext password. If empty, a strong random password is generated and exposed as a sensitive output psql_admin_pwd.
 
-  Workaround  :   Upon retry couple of times , the operation succeeds .
+PostgreSQL
+- psql_version (number, default 16)
+- num_ocpu (number, default 2): OCPU count for PostgreSQL
+- inst_count (number, default 1)
+- psql_shape_name (string, default "PostgreSQL.VM.Standard.E5.Flex")
+- psql_iops (map(number), default as provided): IOPS profile mapping
+
+Compute (optional)
+- create_compute (bool, default false): Whether to create compute instance
+- compute_shape (string, default "VM.Standard.E4.Flex")
+- compute_ocpus (number, default 1)
+- compute_memory_in_gbs (number, default 8)
+- compute_assign_public_ip (bool, default false): Public IP for VNIC; ensure your subnet permits it
+- compute_display_name (string, default "app-host-1")
+- compute_ssh_public_key (string): SSH public key for opc user
+- compute_image_ocid (string, default ""): If empty, latest Oracle Linux image is selected
+- compute_nsg_ids (list(string), default []): Optional NSG OCIDs to attach
+- compute_boot_volume_size_in_gbs (number, default 50)
+
+## Behavior Notes
+
+- PostgreSQL password handling:
+  - If psql_admin_password == "", a strong random password is generated via the random provider.
+  - The final password is returned as a sensitive output: psql_admin_pwd.
+  - No OCI Vault or KMS is used by this module.
+
+- Networking and Security:
+  - Private subnet: no public IPs; PSQL port 5432 allowed only from within VCN via NSG.
+  - Public subnet: has IGW and route table for internet access; default security list allows SSH (22).
+
+- Availability Domain:
+  - Selected dynamically using the first available AD in the region.
+
+## Outputs
+
+- psql_admin_pwd (sensitive): Final PostgreSQL admin password (provided or generated)
+- compute_instance_id: OCID of the compute instance (if created)
+
+## Usage in Oracle Resource Manager
+
+- Create a Stack from this directory (oci_postgres_tf_stack) or ZIP it and upload.
+- Provide required variables (compartment_ocid, psql_admin). Optional: psql_admin_password; if omitted, a random password is generated.
+- For Compute, set create_compute=true and provide compute_ssh_public_key.
+- Plan and Apply. Retrieve the psql_admin_pwd value from the Job outputs (sensitive).
+
+## Known Considerations
+
+- If you use an existing subnet (create_vcn_subnet=false), ensure its routing and public IP policies match your compute_assign_public_ip choice.
+- For private-only access to Compute, set compute_assign_public_ip=false and use Bastion/VPN/DRG as appropriate.

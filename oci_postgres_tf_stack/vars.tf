@@ -31,21 +31,24 @@ variable "psql_subnet_ocid" {
   default     = ""
 }
 
+variable "public_subnet_ocid" {
+  type        = string
+  description = "Public Subnet OCID to use for Compute when create_vcn_subnet = false. If empty, psql_subnet_ocid is used."
+  default     = ""
+}
+
 variable "vcn_cidr" {
   type    = list(string)
   default = ["10.10.0.0/16"]
 }
 
-## Vault/KMS
+## Credentials
 
-variable "create_vault" {
-  type    = bool
-  default = true
-}
-
-variable "vault_id" {
-  type    = string
-  default = ""
+variable "psql_admin_password" {
+  type        = string
+  description = "Optional admin password. Leave empty to auto-generate a strong random password."
+  default     = ""
+  sensitive   = true
 }
 
 ## PostgreSQL
@@ -73,7 +76,7 @@ variable "num_ocpu" {
 variable "psql_shape_name" {
   type        = string
   description = "PostgreSQL shape family name"
-  default     = "PostgreSQL.VM.Standard.E4.Flex"
+  default     = "PostgreSQL.VM.Standard.E5.Flex"
 }
 
 variable "psql_iops" {

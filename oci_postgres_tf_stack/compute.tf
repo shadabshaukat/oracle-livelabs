@@ -26,10 +26,9 @@ resource "oci_core_instance" "app_host" {
   }
 
   create_vnic_details {
-    # If we create the private subnet in this stack, force no public IP (subnet prohibits public IPs).
-    # If using an existing subnet (create_vcn_subnet=false), honor the user-provided flag.
-    assign_public_ip = var.create_vcn_subnet == true ? false : var.compute_assign_public_ip
-    subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1-psql-priv-subnet[0].id : var.psql_subnet_ocid
+    # For stack-created network, compute is placed in the public subnet.
+    assign_public_ip = var.compute_assign_public_ip
+    subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1-pub-subnet[0].id : (length(var.public_subnet_ocid) > 0 ? var.public_subnet_ocid : var.psql_subnet_ocid)
     nsg_ids          = var.compute_nsg_ids
   }
 

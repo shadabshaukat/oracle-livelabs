@@ -2,8 +2,8 @@
 
 This repository contains a Terraform stack to deploy:
 - Oracle Cloud Infrastructure (OCI) Virtual Cloud Network (VCN) with a private subnet and related networking (NAT Gateway, optional Service Gateway, Route Table, Security Lists, NSG)
-- OCI PostgreSQL Database System with credentials stored in OCI Vault/Key/Secret
-- Optional: A small OCI Compute instance (private) in the same subnet (added in this iteration)
+- OCI PostgreSQL Database System with admin password provided or auto-generated (no Vault)
+- Optional: A small OCI Compute instance in a public subnet (added in this iteration)
 
 The stack is designed to work both in Terraform CLI and Oracle Resource Manager (ORM). This README focuses on deploying via ORM.
 
@@ -13,7 +13,7 @@ Repository layout:
 
 ## Prerequisites
 
-- OCI tenancy with permissions to create networking, KMS Vault/Key/Secret, OCI PostgreSQL, and Compute Instance
+- OCI tenancy with permissions to create networking, OCI PostgreSQL, and Compute Instance
 - A target Compartment OCID where resources will be created
 - Oracle Resource Manager policies in place (tenant or compartment scope). Example policy (recommended at compartment scope):
   - allow service resource_manager to manage all-resources in compartment <your_compartment_name>
@@ -24,14 +24,23 @@ Repository layout:
 - VCN with CIDR 10.10.0.0/16 (configurable) and a private subnet (no public IPs)
 - Optional Service Gateway to access Oracle Services Network
 - NAT Gateway for outbound internet from private subnet
+- Public subnet for Compute with Internet Gateway and route table
 - Default Security List with SSH ingress to 22 (security still restricted by private subnet no-public-IP)
 - NSG for PostgreSQL (ingress tcp/5432)
-- OCI KMS Vault (optional), Key and Secret for PostgreSQL admin credentials
+- PostgreSQL admin password handled via input or generated (sensitive output; no Vault)
 - OCI PostgreSQL DB System with:
   - Flexible CPU/memory based on variables
   - Admin username provided by variable
-  - Admin password stored as a Vault secret (generated via random_string)
-- Optional Compute instance in the same private subnet (no public IP by default)
+  - Admin password provided via psql_admin_password or auto-generated (random_password), returned as a sensitive output
+- Optional Compute instance in the public subnet
+
+## Subnet defaults and ports
+
+- When vcn_cidr is ["10.10.0.0/16"], the module creates:
+  - Private subnet: 10.10.1.0/24 (cidrsubnet(..., 8, 1))
+  - Public subnet: 10.10.2.0/24 (cidrsubnet(..., 8, 2))
+- Public subnet ingress allowed: tcp/22, tcp/443, tcp/8443, tcp/8000, tcp/9000 from 0.0.0.0/0
+- Private subnet ingress allowed: tcp/22 and tcp/5432 from within the VCN CIDR
 
 ## Variables (ORM stack inputs)
 
@@ -47,17 +56,17 @@ Networking:
 - create_service_gateway: Whether to create Service Gateway (default: true)
 - vcn_cidr: List of VCN CIDR blocks (default: ["10.10.0.0/16"])
 - psql_subnet_ocid: If not creating VCN/subnet, the OCID of an existing private subnet to use (default: "")
+- public_subnet_ocid: If not creating VCN/subnet, the OCID of an existing public subnet to use for Compute (default: ""; if omitted, psql_subnet_ocid is used)
 
-Vault/KMS:
-- create_vault: Whether to create a new Vault (default: true)
-- vault_id: Existing vault OCID if not creating a new one (default: "")
+Credentials:
+- psql_admin_password: Optional plain-text admin password; leave blank to auto-generate a strong random password. The final value is returned as sensitive output psql_admin_pwd.
 
 PostgreSQL:
 - psql_admin: Admin username for the PostgreSQL service (no default; required)
 - psql_version: PostgreSQL version (default: 16)
 - inst_count: Number of DB instances (default: 1)
 - num_ocpu: OCPU count for PostgreSQL (default: 2)
-- psql_shape_name: PostgreSQL shape family name (default: "PostgreSQL.VM.Standard.E4.Flex"). Use with num_ocpu to determine capacity; memory is derived as num_ocpu × 16 GB.
+- psql_shape_name: PostgreSQL shape family name (default: "PostgreSQL.VM.Standard.E5.Flex"). Use with num_ocpu to determine capacity; memory is derived as num_ocpu × 16 GB.
 - psql_iops: Internal map of IO settings (do not modify unless you know what you are doing)
 
 Compute (optional small instance added with this iteration):
@@ -65,7 +74,7 @@ Compute (optional small instance added with this iteration):
 - compute_shape: Compute shape (default: "VM.Standard.E4.Flex")
 - compute_ocpus: OCPU count (default: 1)
 - compute_memory_in_gbs: Memory in GB (default: 8)
-- compute_assign_public_ip: Assign public IP to VNIC (default: false). If this stack creates the subnet (create_vcn_subnet=true), public IPs are prohibited and this will be forced to false. If you use an existing subnet (create_vcn_subnet=false), this flag is honored but must be compatible with that subnet’s settings.
+- compute_assign_public_ip: Assign public IP to VNIC (default: false). When this stack creates the network, the compute instance is placed in the public subnet; set this to true to assign a public IP. If you use an existing subnet (create_vcn_subnet=false), this flag must be compatible with that subnet’s settings.
 - compute_display_name: Display name (default: "app-host-1")
 - compute_ssh_public_key: SSH public key for opc user (default: ""). Required for instance SSH access.
 - compute_image_ocid: Optional image OCID to use; if blank the latest Oracle Linux image compatible with the shape will be selected automatically.
@@ -78,7 +87,7 @@ Notes:
 
 ## Outputs
 
-- psql_admin_pwd: Sensitive output of generated admin password (also stored in Vault secret)
+- psql_admin_pwd: Sensitive output of admin password (provided or generated)
 - compute_instance_id: OCID of the compute instance (if created)
 
 ## Deploying via Oracle Resource Manager
@@ -96,7 +105,7 @@ Notes:
    - Terraform version: Any supported by the `oracle/oci` provider and your environment (the stack uses provider constraints minimally)
    - Configure variables as described above:
      - Required: compartment_ocid, psql_admin
-     - Optional: region (defaults to us-ashburn-1), create_vcn_subnet, create_service_gateway, create_vault, etc.
+     - Optional: region (defaults to us-ashburn-1), create_vcn_subnet, create_service_gateway, etc.
      - Compute: set create_compute, compute_ssh_public_key (recommended), and others as needed
 
 3. Create the Stack.
@@ -107,7 +116,7 @@ Notes:
 
 5. Review Outputs:
    - After Apply completes, navigate to the Job details to see Outputs:
-     - psql_admin_pwd (sensitive, also stored in Vault)
+     - psql_admin_pwd (sensitive)
      - compute_instance_id (if compute created)
 
 ## Updating the Stack to add the small Compute instance
@@ -120,22 +129,22 @@ If you created the stack prior to this iteration and want to add the compute ins
   - Adjust compute_shape / compute_ocpus / compute_memory_in_gbs if needed (defaults: VM.Standard.E4.Flex, 1 OCPU, 8 GB)
 - Run Plan and then Apply in Resource Manager
 
-The compute instance is created in the same private subnet as PostgreSQL by default. For public access you would need a public subnet, a different design, or Bastion.
+The compute instance is created in the public subnet by default. For private-only access, set compute_assign_public_ip=false and/or attach to your own private subnet (set create_vcn_subnet=false and supply psql_subnet_ocid).
 
 ## Destroying the Stack
 
 - In ORM, from the Stack view: Actions → Terraform Destroy
-- This will remove all resources created by the stack (PostgreSQL, networking, vault/keys, and compute if created)
+- This will remove all resources created by the stack (PostgreSQL, networking, and compute if created)
 
 ## Troubleshooting
 
-- KMS Vault/Key creation can occasionally fail DNS resolution on first try (known OCI transient). Re-run Apply; it often succeeds on retry.
+- If plan/apply fails due to permissions, ensure the compartment policy allows Resource Manager to manage the required resources.
 - Ensure the compartment policy allows Resource Manager to manage resources in the compartment.
 - If not creating VCN/subnet, verify your provided subnet OCID is in the compartment and region specified and is private.
 
 ## Notes on Security
 
-- PostgreSQL admin credentials are generated and stored as an OCI Vault Secret.
+- PostgreSQL admin password is provided or auto-generated and returned only as a sensitive output (no Vault).
 - Default Security List allows SSH from 0.0.0.0/0, but the private subnet prohibits public IPs, which prevents exposure by default. Lock down further as per your security requirements and consider NSGs tailored for the compute instance.
 
 ## CLI usage (optional)

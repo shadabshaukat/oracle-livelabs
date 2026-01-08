@@ -23,7 +23,7 @@ resource oci_core_vcn vcn1 {
 
 resource oci_core_subnet vcn1-psql-priv-subnet {
   
-  cidr_block     =  cidrsubnet(var.vcn_cidr[0],8,0)
+  cidr_block     =  cidrsubnet(var.vcn_cidr[0],8,1)
   compartment_id = var.compartment_ocid
   dhcp_options_id = oci_core_vcn.vcn1[0].default_dhcp_options_id
   display_name    = "psql-priv-subnet"
@@ -37,8 +37,7 @@ resource oci_core_subnet vcn1-psql-priv-subnet {
   prohibit_public_ip_on_vnic = "true"
   route_table_id             = oci_core_route_table.VCN1-RT[0].id
   security_list_ids = [
-    #oci_core_security_list.Default-Security-List-VCN1.id,
-    oci_core_default_security_list.Default-Security-List-VCN1[0].id,
+    oci_core_security_list.VCN1-PRIVATE-SL[0].id,
   ]
   vcn_id = oci_core_vcn.vcn1[0].id
   count = var.create_vcn_subnet == true ? 1 : 0
@@ -95,8 +94,8 @@ resource "oci_core_network_security_group_security_rule" "vcn1-nsg_rule_0" {
     protocol = "6" #TCP
 
 
-    description = "Ingress on PSQL DB Connection from Within / Other VCNs."
-    source = "0.0.0.0/0"
+    description = "Ingress on PSQL DB Connection from within VCN only."
+    source = var.vcn_cidr[0]
     source_type = "CIDR_BLOCK"
     stateless = false
      tcp_options {
@@ -152,7 +151,13 @@ resource "oci_core_route_table" "VCN1-RT" {
     }
   }
 
-  
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_nat_gateway.vcn1-NGTWY[0].id
+    description       = "Private subnet egress via NAT Gateway"
+  }
+
   vcn_id = oci_core_vcn.vcn1[0].id
   
 }
@@ -215,4 +220,158 @@ resource "oci_core_default_security_list" "Default-Security-List-VCN1" {
   }
     manage_default_resource_id = oci_core_vcn.vcn1[0].default_security_list_id
    
+}
+
+# Internet Gateway for public subnet egress
+resource "oci_core_internet_gateway" "vcn1-IGW" {
+  compartment_id = var.compartment_ocid
+  display_name   = "IGW"
+  vcn_id         = oci_core_vcn.vcn1[0].id
+  enabled        = true
+  count          = var.create_vcn_subnet == true ? 1 : 0
+}
+
+# Route table for public subnet (default route to IGW)
+resource "oci_core_route_table" "VCN1-PUB-RT" {
+  count          = var.create_vcn_subnet == true ? 1 : 0
+  compartment_id = var.compartment_ocid
+
+  display_name = "VCN1-PUB-RT"
+  freeform_tags = {
+  }
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_internet_gateway.vcn1-IGW[0].id
+    description       = "Internet access via IGW"
+  }
+
+  vcn_id = oci_core_vcn.vcn1[0].id
+}
+
+# Public Subnet for Compute
+resource "oci_core_subnet" "vcn1-pub-subnet" {
+  cidr_block                 = cidrsubnet(var.vcn_cidr[0],8,2)
+  compartment_id             = var.compartment_ocid
+  dhcp_options_id            = oci_core_vcn.vcn1[0].default_dhcp_options_id
+  display_name               = "pub-subnet"
+  dns_label                  = "pubsubnet"
+  freeform_tags              = {
+  }
+  prohibit_internet_ingress  = "false"
+  prohibit_public_ip_on_vnic = "false"
+  route_table_id             = oci_core_route_table.VCN1-PUB-RT[0].id
+  security_list_ids = [
+    oci_core_security_list.VCN1-PUBLIC-SL[0].id,
+  ]
+  vcn_id = oci_core_vcn.vcn1[0].id
+  count  = var.create_vcn_subnet == true ? 1 : 0
+}
+
+# Security List for Private Subnet (22, 5432 from within VCN)
+resource "oci_core_security_list" "VCN1-PRIVATE-SL" {
+  count          = var.create_vcn_subnet == true ? 1 : 0
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.vcn1[0].id
+  display_name   = "VCN1-PRIVATE-SL"
+
+  egress_security_rules {
+    destination      = "0.0.0.0/0"
+    destination_type = "CIDR_BLOCK"
+    protocol         = "all"
+    stateless        = false
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = var.vcn_cidr[0]
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "22"
+      max = "22"
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = var.vcn_cidr[0]
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "5432"
+      max = "5432"
+    }
+  }
+}
+
+# Security List for Public Subnet (22, 443, 8443, 8000, 9000 from Internet)
+resource "oci_core_security_list" "VCN1-PUBLIC-SL" {
+  count          = var.create_vcn_subnet == true ? 1 : 0
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.vcn1[0].id
+  display_name   = "VCN1-PUBLIC-SL"
+
+  egress_security_rules {
+    destination      = "0.0.0.0/0"
+    destination_type = "CIDR_BLOCK"
+    protocol         = "all"
+    stateless        = false
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "22"
+      max = "22"
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "443"
+      max = "443"
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "8443"
+      max = "8443"
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "8000"
+      max = "8000"
+    }
+  }
+
+  ingress_security_rules {
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    source_type = "CIDR_BLOCK"
+    stateless   = false
+    tcp_options {
+      min = "9000"
+      max = "9000"
+    }
+  }
 }
