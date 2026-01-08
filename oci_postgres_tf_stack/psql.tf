@@ -39,12 +39,11 @@ resource oci_psql_db_system psql_inst_1 {
     maintenance_window_start = "FRI 04:00"
   }
   network_details {
-    nsg_ids = [ var.create_vcn_subnet == true ? oci_core_network_security_group.vcn1-nsg[0].id : null
-    ]
+    nsg_ids = var.create_vcn_subnet == true ? [oci_core_network_security_group.vcn1-nsg[0].id] : []
     #primary_db_endpoint_private_ip = 
     subnet_id      = var.create_vcn_subnet == true ?  oci_core_subnet.vcn1-psql-priv-subnet[0].id : var.psql_subnet_ocid
   }
-   shape = lookup(var.psql_shape,var.num_ocpu, "PostgreSQL.VM.Standard.E4.Flex.2.32GB")
+   shape = var.psql_shape_name
   
   storage_details {
     availability_domain   = data.oci_identity_availability_domain.US-ASHBURN-AD-1.name

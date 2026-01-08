@@ -21,34 +21,22 @@ variable "vault_id" {
 ## PSQL 
 variable "psql_admin" {
     type = string
-    description = "Name of PSQL Admin Usern"
+    description = "Name of PSQL Admin Username"
 }
 
-variable psql_version {  default = 14 } 
+variable psql_version {  default = 16 } 
 variable inst_count  { default = 1 }
 
 variable "num_ocpu" { default = 2 }
   
-variable  psql_shape  {
-    type = map(string) 
-    default = { 
-    2 =  "PostgreSQL.VM.Standard.E4.Flex.2.32GB"
-    4 =  "PostgreSQL.VM.Standard.E4.Flex.4.64GB" 
-    8 =  "PostgreSQL.VM.Standard.E4.Flex.8.128GB"
-    16 =  "PostgreSQL.VM.Standard.E4.Flex.16.256GB"
-    32 =  "PostgreSQL.VM.Standard.E4.Flex.32.512GB"
-    64 =  "PostgreSQL.VM.Standard.E4.Flex.64.1024GB"
-    }
+variable "psql_shape_name" {
+  type    = string
+  default = "PostgreSQL.VM.Standard.E4.Flex"
 }
 
 variable psql_iops {
    type = map(number)
-    default = {
-    75  = 75000
-    150 = 150000
-    225 = 225000
-    300 = 300000
-    }
+    default = {75000}
 }
 
 #variable psql_passwd_type  {  default = "PLAIN_TEXT" }
@@ -61,7 +49,7 @@ variable "compute_shape" { default = "VM.Standard.E4.Flex" }
 
 variable "compute_ocpus" { default = 1 }
 
-variable "compute_memory_in_gbs" { default = 6 }
+variable "compute_memory_in_gbs" { default = 8 }
 
 variable "compute_assign_public_ip" { default = false }
 

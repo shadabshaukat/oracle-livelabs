@@ -56,7 +56,7 @@ PostgreSQL:
 - psql_version: PostgreSQL version (default: 14)
 - inst_count: Number of DB instances (default: 1)
 - num_ocpu: OCPU count for PostgreSQL (default: 2)
-- psql_shape: Internal map used to select the PG shape from OCPU count (do not modify unless you know what you are doing)
+- psql_shape_name: PostgreSQL shape family name (default: "PostgreSQL.VM.Standard.E4.Flex"). Use with num_ocpu to determine capacity; memory is derived as num_ocpu × 16 GB.
 - psql_iops: Internal map of IO settings (do not modify unless you know what you are doing)
 
 Compute (optional small instance added with this iteration):
