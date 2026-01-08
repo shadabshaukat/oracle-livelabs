@@ -78,9 +78,7 @@ variable "psql_shape_name" {
 
 variable "psql_iops" {
   type = number
-  default = {
-75000
-  }
+  default = 75000
 }
 
 # variable "psql_passwd_type" { default = "PLAIN_TEXT" }
