@@ -14,3 +14,7 @@ output "compute_state" {
 output "compute_public_ip" {
   value = length(data.oci_core_vnic.app_host_primary_vnic) > 0 ? data.oci_core_vnic.app_host_primary_vnic[0].public_ip_address : null
 }
+
+output "compute_private_ip" {
+  value = length(data.oci_core_vnic.app_host_primary_vnic) > 0 ? data.oci_core_vnic.app_host_primary_vnic[0].private_ip_address : null
+}

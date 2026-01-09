@@ -172,3 +172,17 @@ variable "bootstrap_inline" {
     "sudo dnf install -y postgresql16"
   ]
 }
+
+# Alternative key inputs for bootstrap SSH (use ONE of these if not using api_private_key_for_ssh)
+variable "api_private_key_for_ssh_b64" {
+  type        = string
+  description = "Base64-encoded PEM private key for SSH (will be base64-decoded for remote-exec)"
+  default     = ""
+  sensitive   = true
+}
+
+variable "api_private_key_for_ssh_path" {
+  type        = string
+  description = "Optional local path to PEM private key (used with file() if set). In ORM, prefer plain or base64 content variables."
+  default     = ""
+}

@@ -83,7 +83,11 @@ Compute (optional small instance added with this iteration):
 Bootstrap (optional):
 - enable_bootstrap: Whether to run remote-exec bootstrap commands on the compute instance after provisioning (default: false)
 - bootstrap_user: SSH username for remote-exec (default: "opc")
-- api_private_key_for_ssh: Private key (PEM content) used for SSH connection during bootstrap remote-exec (sensitive)
+- Keys (choose ONE):
+  - api_private_key_for_ssh: Private key (PEM content) used for SSH connection during bootstrap (sensitive)
+  - api_private_key_for_ssh_b64: Base64-encoded PEM private key content (sensitive)
+  - api_private_key_for_ssh_path: Optional path to key on the runner; in ORM, prefer content variables
+- compute_assign_public_ip: Set to true so the runner can reach the instance over the Internet, or ensure private network reachability
 - bootstrap_inline: List of commands to run via remote-exec (default installs PostgreSQL client 16 via pgdg repo)
 
 Notes:
@@ -149,6 +153,22 @@ The compute instance is created in the public subnet by default. For private-onl
 - If plan/apply fails due to permissions, ensure the compartment policy allows Resource Manager to manage the required resources.
 - Ensure the compartment policy allows Resource Manager to manage resources in the compartment.
 - If not creating VCN/subnet, verify your provided subnet OCID is in the compartment and region specified and is private.
+
+Remote-exec bootstrap issues:
+- Error: remote-exec provisioner error ... Failed to read ssh private key: no key found
+  - Ensure compute_assign_public_ip=true (or provide private connectivity from ORM runner). The bootstrap is gated to run only when a public IP is assigned.
+  - Provide ONE of the following for the private key used to connect as the bootstrap_user (default opc):
+    - api_private_key_for_ssh: Paste the PEM content including header/footer and line breaks:
+      -----BEGIN RSA PRIVATE KEY-----
+      ...
+      -----END RSA PRIVATE KEY-----
+    - api_private_key_for_ssh_b64: Base64-encoded PEM content (safer when the UI strips newlines). Example to produce:
+      base64 -w0 ~/.ssh/id_rsa
+    - api_private_key_for_ssh_path: Path on the runner (not typical for ORM; prefer the content variables above).
+  - The public key in compute_ssh_public_key must match the private key you provided above.
+  - Confirm security allows SSH: the public subnet security list permits tcp/22 from 0.0.0.0/0 by default; if you changed NSGs, ensure tcp/22 is allowed.
+  - If using an existing public subnet (create_vcn_subnet=false), verify that subnet policy allows public IPs and any attached NSGs permit tcp/22.
+  - If you need to run bootstrap on a private IP only workflow, set compute_assign_public_ip=false and enable reachability (e.g., Bastion/DRG/VPN) and remove the public-IP gate in compute.tf if appropriate for your environment.
 
 ## Notes on Security
 
