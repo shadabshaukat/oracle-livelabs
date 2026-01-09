@@ -61,28 +61,3 @@ data "oci_core_vnic" "app_host_primary_vnic" {
   vnic_id = data.oci_core_vnic_attachments.app_host_vnics[0].vnic_attachments[0].vnic_id
 }
 
-# Optional bootstrap (remote-exec) on the compute instance
-resource "null_resource" "app_host_bootstrap" {
-  # Run bootstrap only when:
-  # - compute is being created
-  # - bootstrap is enabled
-  # - a public IP is assigned (ORM runner can reach the instance)
-  count = var.create_compute == true && var.enable_bootstrap == true && var.compute_assign_public_ip == true ? 1 : 0
-
-  depends_on = [oci_core_instance.app_host]
-
-  connection {
-    type        = "ssh"
-    host        = var.compute_assign_public_ip ? data.oci_core_vnic.app_host_primary_vnic[0].public_ip_address : data.oci_core_vnic.app_host_primary_vnic[0].private_ip_address
-    user        = var.bootstrap_user
-    private_key = length(var.api_private_key_for_ssh_b64) > 0 ? trimspace(base64decode(var.api_private_key_for_ssh_b64)) : (length(var.api_private_key_for_ssh_path) > 0 ? trimspace(file(var.api_private_key_for_ssh_path)) : trimspace(var.api_private_key_for_ssh))
-  }
-
-  provisioner "remote-exec" {
-    inline = var.bootstrap_inline
-  }
-
-  triggers = {
-    instance_id = oci_core_instance.app_host[0].id
-  }
-}
