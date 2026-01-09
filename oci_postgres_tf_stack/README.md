@@ -46,7 +46,7 @@ PostgreSQL
 
 Compute (optional)
 - create_compute (bool, default false): Whether to create compute instance
-- compute_shape (string, default "VM.Standard.E4.Flex")
+- compute_shape (string, default "VM.Standard.E5.Flex")
 - compute_ocpus (number, default 1)
 - compute_memory_in_gbs (number, default 8)
 - compute_assign_public_ip (bool, default false): Public IP for VNIC; ensure your subnet permits it
@@ -74,6 +74,8 @@ Compute (optional)
 
 - psql_admin_pwd (sensitive): Final PostgreSQL admin password (provided or generated)
 - compute_instance_id: OCID of the compute instance (if created)
+- compute_state: Lifecycle state of the compute instance (if created)
+- compute_public_ip: Public IP of the compute instance (if created and assigned)
 
 ## Usage in Oracle Resource Manager
 

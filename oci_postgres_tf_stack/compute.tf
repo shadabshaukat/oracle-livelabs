@@ -48,3 +48,37 @@ resource "oci_core_instance" "app_host" {
     delete = "60m"
   }
 }
+
+# Primary VNIC attachments (for IP outputs and optional bootstrap)
+data "oci_core_vnic_attachments" "app_host_vnics" {
+  count          = var.create_compute == true ? 1 : 0
+  compartment_id = var.compartment_ocid
+  instance_id    = oci_core_instance.app_host[0].id
+}
+
+data "oci_core_vnic" "app_host_primary_vnic" {
+  count   = var.create_compute == true ? 1 : 0
+  vnic_id = data.oci_core_vnic_attachments.app_host_vnics[0].vnic_attachments[0].vnic_id
+}
+
+# Optional bootstrap (remote-exec) on the compute instance
+resource "null_resource" "app_host_bootstrap" {
+  count = var.create_compute == true && var.enable_bootstrap == true ? 1 : 0
+
+  depends_on = [oci_core_instance.app_host]
+
+  connection {
+    type        = "ssh"
+    host        = var.compute_assign_public_ip ? data.oci_core_vnic.app_host_primary_vnic[0].public_ip_address : data.oci_core_vnic.app_host_primary_vnic[0].private_ip_address
+    user        = var.bootstrap_user
+    private_key = var.api_private_key_for_ssh
+  }
+
+  provisioner "remote-exec" {
+    inline = var.bootstrap_inline
+  }
+
+  triggers = {
+    instance_id = oci_core_instance.app_host[0].id
+  }
+}

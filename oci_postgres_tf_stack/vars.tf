@@ -142,3 +142,33 @@ variable "compute_boot_volume_size_in_gbs" {
   type    = number
   default = 50
 }
+
+# Optional bootstrap (remote-exec) for compute
+variable "enable_bootstrap" {
+  type        = bool
+  description = "Whether to run remote-exec bootstrap commands on the compute instance after provisioning"
+  default     = false
+}
+
+variable "bootstrap_user" {
+  type        = string
+  description = "SSH username to connect for bootstrap remote-exec"
+  default     = "opc"
+}
+
+variable "api_private_key_for_ssh" {
+  type        = string
+  description = "Private key (PEM content) used for SSH connection during bootstrap remote-exec"
+  default     = ""
+  sensitive   = true
+}
+
+variable "bootstrap_inline" {
+  type        = list(string)
+  description = "Commands to run via remote-exec on the compute instance"
+  default     = [
+    "sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm",
+    "sudo dnf -qy module disable postgresql",
+    "sudo dnf install -y postgresql16"
+  ]
+}

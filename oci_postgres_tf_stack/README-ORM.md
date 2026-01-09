@@ -71,7 +71,7 @@ PostgreSQL:
 
 Compute (optional small instance added with this iteration):
 - create_compute: Whether to create a compute instance (default: false)
-- compute_shape: Compute shape (default: "VM.Standard.E4.Flex")
+- compute_shape: Compute shape (default: "VM.Standard.E5.Flex")
 - compute_ocpus: OCPU count (default: 1)
 - compute_memory_in_gbs: Memory in GB (default: 8)
 - compute_assign_public_ip: Assign public IP to VNIC (default: false). When this stack creates the network, the compute instance is placed in the public subnet; set this to true to assign a public IP. If you use an existing subnet (create_vcn_subnet=false), this flag must be compatible with that subnet’s settings.
@@ -79,6 +79,12 @@ Compute (optional small instance added with this iteration):
 - compute_ssh_public_key: SSH public key for opc user (default: ""). Required for instance SSH access.
 - compute_image_ocid: Optional image OCID to use; if blank the latest Oracle Linux image compatible with the shape will be selected automatically.
 - compute_nsg_ids: Optional list of NSG OCIDs to attach to the VNIC (default: [])
+
+Bootstrap (optional):
+- enable_bootstrap: Whether to run remote-exec bootstrap commands on the compute instance after provisioning (default: false)
+- bootstrap_user: SSH username for remote-exec (default: "opc")
+- api_private_key_for_ssh: Private key (PEM content) used for SSH connection during bootstrap remote-exec (sensitive)
+- bootstrap_inline: List of commands to run via remote-exec (default installs PostgreSQL client 16 via pgdg repo)
 
 Notes:
 - If create_vcn_subnet=false, provide psql_subnet_ocid of an existing private subnet to place both the PostgreSQL service and the compute instance.
@@ -89,6 +95,8 @@ Notes:
 
 - psql_admin_pwd: Sensitive output of admin password (provided or generated)
 - compute_instance_id: OCID of the compute instance (if created)
+- compute_state: Lifecycle state of the compute instance (if created)
+- compute_public_ip: Public IP of the compute instance (if created and assigned)
 
 ## Deploying via Oracle Resource Manager
 
