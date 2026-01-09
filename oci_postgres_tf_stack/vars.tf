@@ -100,7 +100,7 @@ variable "create_compute" {
 
 variable "compute_shape" {
   type    = string
-  default = "VM.Standard.E4.Flex"
+  default = "VM.Standard.E5.Flex"
 }
 
 variable "compute_ocpus" {
