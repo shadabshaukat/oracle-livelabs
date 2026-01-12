@@ -5,7 +5,7 @@ description = "Enterprise-grade Gradio + FastAPI search app with OCI PostgreSQL 
 authors = [{ name = "Your Org", email = "devnull@example.com" }]
 requires-python = ">=3.10"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 
 # Core runtime dependencies
 dependencies = [
@@ -35,6 +35,10 @@ Homepage = "https://github.com/your-org/enterprise-searchapp"
 
 [project.scripts]
 searchapp = "app.main:main"
+
+[tool.setuptools]
+# Explicitly declare packages to avoid auto-discovery picking up 'storage' as a namespace package
+packages = ["app"]
 
 [tool.uv]
 # Ensure uv respects this project file for sync/install
