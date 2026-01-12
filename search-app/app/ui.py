@@ -25,7 +25,7 @@ def build_ui():
     .gr-box { border-radius: 10px; }
     """
 
-    with gr.Blocks(title="Enterprise Search App", theme=gr.themes.Soft(), css=css) as demo:
+    with gr.Blocks(title="Enterprise Search App", theme=gr.themes.Soft(), css=css, analytics_enabled=False, show_api=False) as demo:
         gr.Markdown("# Enterprise Search App\nUpload and search your documents (PDF, HTML, TXT, DOCX). Backed by OCI PostgreSQL + pgvector.")
 
         with gr.Tab("Upload"):
