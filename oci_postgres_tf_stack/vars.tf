@@ -188,7 +188,7 @@ variable "psql_config_description" {
 # Map of config_key => overridden_config_value
 # Example:
 # {
-#   "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical"
+#   "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical,pgvector"
 #   "pglogical.conflict_log_level" = "debug1"
 #   "pg_stat_statements.max"       = "5000"
 # }
@@ -196,7 +196,7 @@ variable "psql_config_overrides" {
   type        = map(string)
   description = "Configuration overrides as key/value pairs"
   default     = {
-    "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical"
+    "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical,pgvector"
     "pglogical.conflict_log_level" = "debug1"
     "pg_stat_statements.max"       = "5000"
   }
