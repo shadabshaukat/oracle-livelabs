@@ -84,6 +84,9 @@
         </div>
       </div>
       <div class="row">
+        <div id="uploadList" class="progress-list" hidden></div>
+      </div>
+      <div class="row">
         <pre id="uploadStatus" class="panel"></pre>
       </div>
     </section>
@@ -111,7 +114,12 @@
     }
 
     function escapeHtml(s) {
-      return (s || '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+      return (s || '')
+        .replace(/&/g, '&')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/"/g, '"')
+        .replace(/'/g, '&#039;');
     }
 
     function highlight(text, query) {
@@ -235,19 +243,22 @@
       const files = input.files;
       if (!files || !files.length) { showToast('No files selected'); return; }
 
-      // Initialize per-file progress UI
-      list.innerHTML = '';
-      list.hidden = false;
-      const items = [];
-      for (const f of files) {
-        const item = document.createElement('div');
-        item.className = 'progress-item';
-        item.innerHTML = `
-          <div class="progress-row"><span>${escapeHtml(f.name)}</span><span class="pct">0%</span></div>
-          <div class="progress"><div class="progress-bar"></div></div>
-        `;
-        list.appendChild(item);
-        items.push(item);
+      // Initialize per-file progress UI (if container exists)
+      let items = [];
+      if (list) {
+        list.innerHTML = '';
+        list.hidden = false;
+        items = [];
+        for (const f of files) {
+          const item = document.createElement('div');
+          item.className = 'progress-item';
+          item.innerHTML = `
+            <div class="progress-row"><span>${escapeHtml(f.name)}</span><span class="pct">0%</span></div>
+            <div class="progress"><div class="progress-bar"></div></div>
+          `;
+          list.appendChild(item);
+          items.push(item);
+        }
       }
 
       loading.hidden = false;
@@ -264,15 +275,14 @@
 
       xhr.upload.onprogress = function (e) {
         if (!e.lengthComputable) return;
-        loaded = e.loaded;
-        const pctTotal = Math.round((loaded / total) * 100);
-        // Update overall label on the last item
-        const last = items[items.length - 1];
-        if (last) last.querySelector('.pct').textContent = pctTotal + '%';
-        // Update bars proportionally (best-effort without per-file granularity)
-        for (const it of items) {
-          const bar = it.querySelector('.progress-bar');
-          bar.style.width = pctTotal + '%';
+        const pctTotal = Math.round((e.loaded / e.total) * 100);
+        if (items && items.length) {
+          const last = items[items.length - 1];
+          if (last) last.querySelector('.pct').textContent = pctTotal + '%';
+          for (const it of items) {
+            const bar = it.querySelector('.progress-bar');
+            bar.style.width = pctTotal + '%';
+          }
         }
       };
 
