@@ -78,8 +78,6 @@
     <section class="card">
       <h2>Upload</h2>
       <div class="row wrap">
-        <input id="files" type="file" multiple />
-        <input id="folder" type="file" webkitdirectory directory multiple />
         <button id="uploadBtn">Upload</button>
         <div class="loader" id="uploadLoading" hidden>
           <div class="spinner small"></div>
@@ -87,7 +85,10 @@
         </div>
       </div>
       <div class="row">
-        <div id="dropzone" class="dropzone">Drag & drop files or folders here</div>
+        <div id="dropzone" class="dropzone">Drag & drop files here</div>
+      </div>
+      <div class="row">
+        <input id="files" type="file" multiple />
       </div>
       <div class="row" id="uploadListRow" hidden>
         <div id="uploadList" class="progress-list"></div>
@@ -127,11 +128,9 @@
     window.addEventListener('DOMContentLoaded', () => {
       const q = document.getElementById('query');
       const files = document.getElementById('files');
-      const folder = document.getElementById('folder');
       const status = document.getElementById('uploadStatus');
       if (q) q.value = '';
       if (files) files.value = '';
-      if (folder) folder.value = '';
       if (status) status.textContent = '';
     });
 
@@ -291,6 +290,8 @@
 
     function addFilesToList(fileList) {
       for (const f of fileList) droppedFiles.push(f);
+      const dz = document.getElementById('dropzone');
+      if (dz) dz.textContent = `${droppedFiles.length} file(s) ready`;
       showToast(`${droppedFiles.length} file(s) ready`);
     }
 
@@ -340,6 +341,16 @@
       }
     });
 
+    // Update dropzone text when browsing files
+    const filesInputEl = document.getElementById('files');
+    if (filesInputEl) {
+      filesInputEl.addEventListener('change', () => {
+        const count = filesInputEl.files ? filesInputEl.files.length : 0;
+        const dz = document.getElementById('dropzone');
+        if (dz) dz.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
+      });
+    }
+
     document.getElementById('readyBtn').addEventListener('click', async () => {
       const box = document.getElementById('readyJson');
       const row = document.getElementById('statusRow');
@@ -356,7 +367,6 @@
     // Per-file upload with retries + concurrency + folder/files + dropped files
     document.getElementById('uploadBtn').addEventListener('click', async () => {
       const filesInput = document.getElementById('files');
-      const folderInput = document.getElementById('folder');
       const status = document.getElementById('uploadStatus');
       const statusRow = document.getElementById('uploadStatusRow');
       const loading = document.getElementById('uploadLoading');
@@ -365,8 +375,7 @@
       status.textContent = '';
 
       const selA = filesInput?.files ? Array.from(filesInput.files) : [];
-      const selB = folderInput?.files ? Array.from(folderInput.files) : [];
-      const allFiles = [...selA, ...selB, ...droppedFiles];
+      const allFiles = [...selA, ...droppedFiles];
       if (!allFiles.length) { showToast('No files selected'); return; }
 
       list.innerHTML = '';
