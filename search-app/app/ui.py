@@ -56,32 +56,38 @@ def build_ui():
             topk = gr.Slider(minimum=1, maximum=20, value=6, step=1, label="Top K")
             search_btn = gr.Button("Search")
             answer = gr.Textbox(label="Answer / Context", lines=12)
-            results = gr.Dataframe(headers=["chunk_id", "document_id", "chunk_index", "distance", "rank", "content"], wrap=True)
+            results = gr.Textbox(label="Results", lines=12)
+
+            def _rows_to_text(rows):
+                out_lines = []
+                for r in rows:
+                    out_lines.append(" | ".join("" if x is None else str(x) for x in r[:5]) + " | " + r[5])
+                return "\n\n".join(out_lines)
 
             def do_search(q: str, m: str, k: int):
                 m = m.lower()
                 if m == "semantic":
                     hits = semantic_search(q, top_k=int(k))
                     rows = [[h.chunk_id, h.document_id, h.chunk_index, h.distance, None, h.content] for h in hits]
-                    return "\n\n".join(h.content for h in hits), rows
+                    return "\n\n".join(h.content for h in hits), _rows_to_text(rows)
                 if m == "fulltext":
                     hits = fulltext_search(q, top_k=int(k))
                     rows = [[h.chunk_id, h.document_id, h.chunk_index, None, h.rank, h.content] for h in hits]
-                    return "\n\n".join(h.content for h in hits), rows
+                    return "\n\n".join(h.content for h in hits), _rows_to_text(rows)
                 if m == "rag":
                     ans, hits = rag(q, mode="hybrid", top_k=int(k))
                     rows = [[h.chunk_id, h.document_id, h.chunk_index, h.distance, h.rank, h.content] for h in hits]
-                    return ans, rows
+                    return ans, _rows_to_text(rows)
                 hits = rag(q, mode="hybrid", top_k=int(k))[1]
                 rows = [[h.chunk_id, h.document_id, h.chunk_index, h.distance, h.rank, h.content] for h in hits]
-                return "\n\n".join(h.content for h in hits), rows
+                return "\n\n".join(h.content for h in hits), _rows_to_text(rows)
 
             search_btn.click(do_search, inputs=[query, mode, topk], outputs=[answer, results])
 
         with gr.Tab("Status"):
             refresh = gr.Button("Refresh")
             status_box = gr.Textbox(label="Status (JSON)", lines=6)
-            counts = gr.Dataframe(headers=["metric", "value"], datatype=["str", "number"])
+            counts_box = gr.Textbox(label="Counts", lines=4)
 
             def do_status():
                 try:
@@ -93,10 +99,10 @@ def build_ui():
                             docs = int(cur.fetchone()[0])
                             cur.execute("SELECT count(*) FROM chunks")
                             ch = int(cur.fetchone()[0])
-                    return json.dumps({"ready": ext_ok}, indent=2), [["documents", docs], ["chunks", ch]]
+                    return json.dumps({"ready": ext_ok}, indent=2), f"documents: {docs}\nchunks: {ch}"
                 except Exception as e:
-                    return json.dumps({"ready": False, "error": str(e)}, indent=2), [["documents", 0], ["chunks", 0]]
+                    return json.dumps({"ready": False, "error": str(e)}, indent=2), "documents: 0\nchunks: 0"
 
-            refresh.click(do_status, inputs=[], outputs=[status_box, counts])
+            refresh.click(do_status, inputs=[], outputs=[status_box, counts_box])
 
         return demo
