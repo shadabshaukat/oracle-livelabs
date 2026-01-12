@@ -228,6 +228,16 @@
         if (data.answer) {
           ans.textContent = data.answer;
           answerRow.hidden = false;
+          const badge = document.getElementById('llmBadge');
+          if (badge) {
+            if (data.used_llm === true) {
+              badge.textContent = 'LLM answer';
+              badge.style.display = 'inline-block';
+            } else {
+              badge.textContent = 'Context-only';
+              badge.style.display = 'inline-block';
+            }
+          }
         }
         renderResults(data.hits, query);
       } catch (e) {

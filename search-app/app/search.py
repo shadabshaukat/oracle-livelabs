@@ -91,7 +91,7 @@ def hybrid_search(query: str, top_k: int = 10, alpha: float = 0.5) -> List[Chunk
     return out
 
 
-def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[ChunkHit]]:
+def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[ChunkHit], bool]:
     logger.info("rag: query=%r mode=%s top_k=%s provider=%s", query, mode, top_k, settings.llm_provider)
     mode = mode.lower()
     if mode == "semantic":
@@ -105,6 +105,7 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
     logger.info("rag: context_chars=%d hits=%d", len(context), len(hits))
 
     answer = context
+    used_llm = False
 
     if settings.llm_provider == "openai" and settings.openai_api_key:
         try:
@@ -122,7 +123,10 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
                 temperature=0.2,
                 max_tokens=512,
             )
-            answer = resp.choices[0].message.content or answer
+            out = resp.choices[0].message.content
+            if out:
+                answer = out
+                used_llm = True
         except Exception as e:
             logger.exception("LLM call failed: %s", e)
     elif settings.llm_provider == "oci":
@@ -132,8 +136,9 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
             out = oci_chat_completion(query, context)
             if out:
                 answer = out
+                used_llm = True
         except Exception as e:
             logger.exception("OCI LLM call failed: %s", e)
 
     logger.info("rag: answer_chars=%d", len(answer or ''))
-    return answer, hits
+    return answer, hits, used_llm

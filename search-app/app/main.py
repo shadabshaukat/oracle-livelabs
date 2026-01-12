@@ -136,12 +136,13 @@ async def api_search(payload: Dict[str, Any]):
         return JSONResponse(status_code=400, content={"error": "query required"})
 
     answer: str | None = None
+    used_llm: bool = False
     if mode == "semantic":
         hits = semantic_search(q, top_k=top_k)
     elif mode == "fulltext":
         hits = fulltext_search(q, top_k=top_k)
     elif mode == "rag":
-        answer, hits = rag(q, mode="hybrid", top_k=top_k)
+        answer, hits, used_llm = rag(q, mode="hybrid", top_k=top_k)
     else:
         hits = hybrid_search(q, top_k=top_k)
 
@@ -175,6 +176,7 @@ async def api_search(payload: Dict[str, Any]):
     out: Dict[str, Any] = {"mode": mode if mode in {"semantic", "fulltext", "rag"} else "hybrid", "hits": hits_out}
     if answer is not None:
         out["answer"] = answer
+        out["used_llm"] = bool(used_llm)
     return out
 
 
