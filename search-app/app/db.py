@@ -119,4 +119,6 @@ def init_db(s: Settings = settings) -> None:
 
 
 def set_search_runtime(cur: psycopg.Cursor, probes: int):
-    cur.execute("SET LOCAL ivfflat.probes = %s", (probes,))
+    # SET LOCAL cannot use bind parameters for the value; interpolate safely as a literal
+    from psycopg import sql
+    cur.execute(sql.SQL("SET LOCAL ivfflat.probes = {}" ).format(sql.Literal(int(probes))))

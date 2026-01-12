@@ -12,24 +12,44 @@
   </header>
 
   <main class="container">
-    <section class="card">
+    <section class="card card--wide">
       <h2>Search</h2>
       <div class="row">
-        <label for="query">Query</label>
+        <label for="query" class="block">Query</label>
         <textarea id="query" rows="3" placeholder="Ask or search..."></textarea>
       </div>
-      <div class="row">
-        <label for="mode">Mode</label>
-        <select id="mode">
-          <option value="hybrid" selected>Hybrid</option>
-          <option value="semantic">Semantic</option>
-          <option value="fulltext">Full-text</option>
-          <option value="rag">RAG</option>
-        </select>
-        <label for="topk" class="leftpad">Top K</label>
-        <input id="topk" type="number" value="6" min="1" max="20" />
-        <button id="searchBtn" class="primary">Search</button>
+      <div class="row wrap">
+        <div class="row no-grow">
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="hybrid" selected>Hybrid</option>
+            <option value="semantic">Semantic</option>
+            <option value="fulltext">Full-text</option>
+            <option value="rag">RAG</option>
+          </select>
+        </div>
+        <div class="row no-grow">
+          <label for="topk" class="leftpad">Top K</label>
+          <input id="topk" type="number" value="6" min="1" max="50" />
+        </div>
+        <div class="row no-grow">
+          <label for="autoSearch" class="leftpad">Auto search</label>
+          <input id="autoSearch" type="checkbox" checked />
+          <label for="debounceMs" class="leftpad">Debounce (ms)</label>
+          <input id="debounceMs" type="number" value="400" min="100" max="2000" />
+        </div>
+        <div class="row no-grow push-right">
+          <button id="searchBtn" class="primary">Search</button>
+        </div>
       </div>
+
+      <div class="row middle">
+        <div class="loader" id="searchLoading" hidden>
+          <div class="spinner"></div>
+          <span>Searching…</span>
+        </div>
+      </div>
+
       <div class="row">
         <label>Answer / Context</label>
         <pre id="answer" class="panel"></pre>
@@ -42,9 +62,13 @@
 
     <section class="card">
       <h2>Upload</h2>
-      <div class="row">
+      <div class="row wrap">
         <input id="files" type="file" multiple />
         <button id="uploadBtn">Upload & Ingest</button>
+        <div class="loader" id="uploadLoading" hidden>
+          <div class="spinner small"></div>
+          <span>Uploading…</span>
+        </div>
       </div>
       <div class="row">
         <pre id="uploadStatus" class="panel"></pre>
@@ -62,20 +86,51 @@
     </section>
   </main>
 
+  <div id="toast" class="toast" hidden></div>
+
   <script>
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.hidden = false;
+      setTimeout(() => { t.hidden = true; t.textContent = ''; }, 3000);
+    }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+    }
+
+    function highlight(text, query) {
+      if (!query) return escapeHtml(text);
+      try {
+        const esc = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(esc, 'ig');
+        return escapeHtml(text).replace(re, m => `<mark>${escapeHtml(m)}</mark>`);
+      } catch {
+        return escapeHtml(text);
+      }
+    }
+
+    function debounce(fn, delay) {
+      let timer = null;
+      return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+      };
+    }
+
     async function api(path, opts={}) {
       const res = await fetch(path, {
         method: opts.method || 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: opts.body ? JSON.stringify(opts.body) : undefined
+        headers: opts.body instanceof FormData ? undefined : { 'Content-Type': 'application/json' },
+        body: opts.body ? (opts.body instanceof FormData ? opts.body : JSON.stringify(opts.body)) : undefined,
+        signal: opts.signal
       });
       if (!res.ok) throw new Error(await res.text());
       return await res.json();
     }
 
-    function renderResults(hits) {
+    function renderResults(hits, query) {
       const wrap = document.getElementById('results');
       wrap.innerHTML = '';
       if (!hits || !hits.length) {
@@ -85,49 +140,101 @@
       for (const h of hits) {
         const div = document.createElement('div');
         div.className = 'hit';
-        const meta = [];
-        if (h.title) meta.push(h.title);
-        if (h.source_path) meta.push(h.source_path);
-        const metaLine = meta.join(' — ');
+        const title = h.title ? escapeHtml(h.title) : '';
+        const source = h.source_path ? escapeHtml(h.source_path) : '';
+        const distance = (h.distance !== null && h.distance !== undefined) ? `distance: ${h.distance.toFixed ? h.distance.toFixed(4) : h.distance}` : '';
+        const rank = (h.rank !== null && h.rank !== undefined) ? `rank: ${h.rank.toFixed ? h.rank.toFixed(4) : h.rank}` : '';
         div.innerHTML = `
-          <div class="hit-meta">${metaLine}</div>
-          <div class="hit-content">${(h.content || '').replace(/</g,'<')}</div>
-          <div class="hit-scores">${h.distance !== null && h.distance !== undefined ? `distance: ${h.distance}` : ''} ${h.rank !== null && h.rank !== undefined ? `rank: ${h.rank}` : ''}</div>
+          <div class="hit-head">
+            <div class="hit-title">${title || '(untitled)'}</div>
+            <div class="hit-badges">${distance ? `<span class="badge">${distance}</span>` : ''}${rank ? `<span class="badge">${rank}</span>` : ''}</div>
+          </div>
+          <div class="hit-meta">${source}</div>
+          <div class="hit-content">${highlight(h.content || '', query)}</div>
         `;
         wrap.appendChild(div);
       }
     }
 
-    document.getElementById('searchBtn').addEventListener('click', async () => {
+    let currentSearchController = null;
+
+    async function doSearch() {
       const query = document.getElementById('query').value.trim();
       const mode = document.getElementById('mode').value;
       const topk = parseInt(document.getElementById('topk').value || '6', 10);
       const ans = document.getElementById('answer');
+      const loading = document.getElementById('searchLoading');
+      const btn = document.getElementById('searchBtn');
+
+      if (!query) { ans.textContent = ''; renderResults([], ''); return; }
+
+      // cancel prior request
+      if (currentSearchController) currentSearchController.abort();
+      const ctrl = new AbortController();
+      currentSearchController = ctrl;
+
+      loading.hidden = false;
+      btn.disabled = true;
       ans.textContent = '';
+
       try {
-        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk } });
+        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk }, signal: ctrl.signal });
         if (data.answer) ans.textContent = data.answer;
-        renderResults(data.hits);
+        renderResults(data.hits, query);
       } catch (e) {
-        ans.textContent = 'Error: ' + e.message;
+        if (e.name !== 'AbortError') {
+          showToast('Search failed');
+          console.error(e);
+        }
+      } finally {
+        if (currentSearchController === ctrl) currentSearchController = null;
+        loading.hidden = true;
+        btn.disabled = false;
       }
+    }
+
+    const debouncedSearch = debounce(() => doSearch().catch(console.error), parseInt(document.getElementById('debounceMs').value, 10));
+
+    document.getElementById('searchBtn').addEventListener('click', () => doSearch());
+
+    document.getElementById('query').addEventListener('input', () => {
+      const auto = document.getElementById('autoSearch').checked;
+      const delay = parseInt(document.getElementById('debounceMs').value || '400', 10);
+      if (auto) {
+        // update debounce delay dynamically
+        debouncedSearch.delay = delay;
+        // re-wrap with new delay
+        const fn = debounce(() => doSearch().catch(console.error), delay);
+        fn();
+      }
+    });
+
+    document.getElementById('mode').addEventListener('change', () => {
+      if (document.getElementById('autoSearch').checked) doSearch();
+    });
+    document.getElementById('topk').addEventListener('change', () => {
+      if (document.getElementById('autoSearch').checked) doSearch();
     });
 
     document.getElementById('uploadBtn').addEventListener('click', async () => {
       const input = document.getElementById('files');
       const status = document.getElementById('uploadStatus');
+      const loading = document.getElementById('uploadLoading');
       status.textContent = '';
       const files = input.files;
-      if (!files || !files.length) { status.textContent = 'No files selected'; return; }
+      if (!files || !files.length) { showToast('No files selected'); return; }
       const form = new FormData();
       for (const f of files) form.append('files', f);
+      loading.hidden = false;
       try {
-        const res = await fetch('/api/upload', { method: 'POST', body: form });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
+        const data = await api('/api/upload', { method: 'POST', body: form });
         status.textContent = JSON.stringify(data, null, 2);
+        showToast('Upload complete');
       } catch (e) {
         status.textContent = 'Error: ' + e.message;
+        showToast('Upload failed');
+      } finally {
+        loading.hidden = true;
       }
     });
 

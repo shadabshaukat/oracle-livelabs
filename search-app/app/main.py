@@ -17,6 +17,7 @@ from .config import settings
 from .db import init_db, get_conn
 from .store import ensure_dirs, ingest_file_path, save_upload
 from .search import semantic_search, fulltext_search, hybrid_search, rag
+from .embeddings import get_model
 
 logger = logging.getLogger("searchapp")
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
@@ -50,6 +51,12 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 def on_startup():
     ensure_dirs()
     init_db()
+    # Preload embeddings model to avoid first-search latency
+    try:
+        get_model()
+        logger.info("Embeddings model preloaded")
+    except Exception as e:
+        logger.exception("Failed to preload embeddings model: %s", e)
     logger.info("Startup complete: directories ensured and database initialized")
 
 
