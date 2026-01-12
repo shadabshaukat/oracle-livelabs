@@ -92,6 +92,7 @@ def hybrid_search(query: str, top_k: int = 10, alpha: float = 0.5) -> List[Chunk
 
 
 def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[ChunkHit]]:
+    logger.debug("rag: query=%r mode=%s top_k=%s provider=%s", query, mode, top_k, settings.llm_provider)
     mode = mode.lower()
     if mode == "semantic":
         hits = semantic_search(query, top_k=top_k)
@@ -101,6 +102,7 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
         hits = hybrid_search(query, top_k=top_k)
 
     context = "\n\n".join(h.content for h in hits)
+    logger.debug("rag: context_chars=%d hits=%d", len(context), len(hits))
 
     answer = context
 
@@ -113,6 +115,7 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
                 "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
                 f"Question: {query}\n\nContext:\n{context[:12000]}"
             )
+            logger.debug("rag: calling OpenAI model=%s prompt_chars=%d", settings.openai_model, len(prompt))
             resp = client.chat.completions.create(
                 model=settings.openai_model,
                 messages=[{"role": "user", "content": prompt}],
@@ -125,10 +128,12 @@ def rag(query: str, mode: str = "hybrid", top_k: int = 6) -> Tuple[str, List[Chu
     elif settings.llm_provider == "oci":
         try:
             from .oci_llm import oci_chat_completion
+            logger.debug("rag: calling OCI GenAI")
             out = oci_chat_completion(query, context)
             if out:
                 answer = out
         except Exception as e:
             logger.exception("OCI LLM call failed: %s", e)
 
+    logger.debug("rag: answer_chars=%d", len(answer or ''))
     return answer, hits

@@ -131,7 +131,7 @@ async def upload(files: List[UploadFile] = File(...)):
 async def api_search(payload: Dict[str, Any]):
     q = payload.get("query", "")
     mode = str(payload.get("mode", "hybrid")).lower()
-    top_k = int(payload.get("top_k", 6))
+    top_k = int(payload.get("top_k", 25))
     if not q:
         return JSONResponse(status_code=400, content={"error": "query required"})
 

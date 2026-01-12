@@ -9,6 +9,8 @@
 <body>
   <header class="topbar">
     <h1>Enterprise Search</h1>
+    <div class="spacer"></div>
+    <button id="themeBtn" class="ghost" title="Toggle dark mode">🌓</button>
   </header>
 
   <main class="container">
@@ -44,11 +46,11 @@
           </div>
           <div class="row no-grow">
             <label for="topk" class="leftpad">Top K</label>
-            <input id="topk" type="number" value="6" min="1" max="50" />
+            <input id="topk" type="number" value="25" min="1" max="50" />
           </div>
           <div class="row no-grow">
             <label for="autoSearch" class="leftpad">Auto search</label>
-            <input id="autoSearch" type="checkbox" checked />
+            <input id="autoSearch" type="checkbox" />
             <label for="debounceMs" class="leftpad">Debounce (ms)</label>
             <input id="debounceMs" type="number" value="400" min="100" max="2000" />
           </div>
@@ -62,11 +64,11 @@
         </div>
       </div>
 
-      <div class="row">
+      <div class="row" id="answerRow" hidden>
         <label>Answer / Context</label>
         <pre id="answer" class="panel"></pre>
       </div>
-      <div class="row">
+      <div class="row" id="resultsRow" hidden>
         <label>Results</label>
         <div id="results" class="results"></div>
       </div>
@@ -77,6 +79,7 @@
       <h2>Upload</h2>
       <div class="row wrap">
         <input id="files" type="file" multiple />
+        <input id="folder" type="file" webkitdirectory directory multiple />
         <button id="uploadBtn">Upload</button>
         <div class="loader" id="uploadLoading" hidden>
           <div class="spinner small"></div>
@@ -84,9 +87,12 @@
         </div>
       </div>
       <div class="row">
-        <div id="uploadList" class="progress-list" hidden></div>
+        <div id="dropzone" class="dropzone">Drag & drop files or folders here</div>
       </div>
-      <div class="row">
+      <div class="row" id="uploadListRow" hidden>
+        <div id="uploadList" class="progress-list"></div>
+      </div>
+      <div class="row" id="uploadStatusRow" hidden>
         <pre id="uploadStatus" class="panel"></pre>
       </div>
     </section>
@@ -97,7 +103,7 @@
       <div class="row">
         <button id="readyBtn">Check Ready</button>
       </div>
-      <div class="row cols">
+      <div class="row cols" id="statusRow" hidden>
         <pre id="readyJson" class="panel"></pre>
       </div>
     </section>
@@ -106,15 +112,29 @@
   <div id="toast" class="toast" hidden></div>
 
   <script>
+    // Theme toggle
+    (function(){
+      const btn = document.getElementById('themeBtn');
+      const curr = localStorage.getItem('theme');
+      if (curr === 'dark') document.body.classList.add('dark');
+      btn.addEventListener('click', () => {
+        document.body.classList.toggle('dark');
+        localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+      });
+    })();
+
     // Clear inputs on load/refresh
     window.addEventListener('DOMContentLoaded', () => {
       const q = document.getElementById('query');
       const files = document.getElementById('files');
+      const folder = document.getElementById('folder');
       const status = document.getElementById('uploadStatus');
       if (q) q.value = '';
       if (files) files.value = '';
+      if (folder) folder.value = '';
       if (status) status.textContent = '';
     });
+
     function showToast(msg) {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -155,8 +175,10 @@
 
     function renderResults(hits, query) {
       const wrap = document.getElementById('results');
+      const row = document.getElementById('resultsRow');
       wrap.innerHTML = '';
       if (!hits || !hits.length) {
+        row.hidden = false;
         wrap.textContent = 'No results';
         return;
       }
@@ -177,6 +199,7 @@
         `;
         wrap.appendChild(div);
       }
+      row.hidden = false;
     }
 
     let currentSearchController = null;
@@ -185,14 +208,14 @@
     async function doSearch() {
       const query = document.getElementById('query').value.trim();
       const mode = document.getElementById('mode').value;
-      const topk = parseInt(document.getElementById('topk').value || '6', 10);
+      const topk = parseInt(document.getElementById('topk').value || '25', 10);
       const ans = document.getElementById('answer');
+      const answerRow = document.getElementById('answerRow');
       const loading = document.getElementById('searchLoading');
       const btn = document.getElementById('searchBtn');
 
       if (!query) { ans.textContent = ''; renderResults([], ''); return; }
 
-      // cancel prior request
       if (currentSearchController) currentSearchController.abort();
       const ctrl = new AbortController();
       currentSearchController = ctrl;
@@ -203,7 +226,10 @@
 
       try {
         const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk }, signal: ctrl.signal });
-        if (data.answer) ans.textContent = data.answer;
+        if (data.answer) {
+          ans.textContent = data.answer;
+          answerRow.hidden = false;
+        }
         renderResults(data.hits, query);
       } catch (e) {
         if (e.name !== 'AbortError') {
@@ -217,10 +243,26 @@
       }
     }
 
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      const q = document.getElementById('query');
+      if (e.key === 'Enter' && document.activeElement === q) {
+        e.preventDefault();
+        doSearch();
+      } else if (e.key === 'Escape') {
+        q.value = '';
+        document.getElementById('answer').textContent = '';
+        document.getElementById('answerRow').hidden = true;
+        const res = document.getElementById('results');
+        res.innerHTML = '';
+        document.getElementById('resultsRow').hidden = true;
+      }
+    });
+
     document.getElementById('searchBtn').addEventListener('click', () => doSearch());
 
     document.getElementById('query').addEventListener('input', () => {
-      const auto = document.getElementById('autoSearch')?.checked ?? true;
+      const auto = document.getElementById('autoSearch')?.checked ?? false;
       const delay = parseInt(document.getElementById('debounceMs')?.value || '400', 10);
       if (auto) {
         clearTimeout(searchTimer);
@@ -243,22 +285,93 @@
       b.setAttribute('aria-expanded', String(!nowHidden));
     });
 
+    // Drag-and-drop support
+    const dropzone = document.getElementById('dropzone');
+    let droppedFiles = [];
+
+    function addFilesToList(fileList) {
+      for (const f of fileList) droppedFiles.push(f);
+      showToast(`${droppedFiles.length} file(s) ready`);
+    }
+
+    async function traverseEntry(entry) {
+      return new Promise((resolve) => {
+        if (entry.isFile) {
+          entry.file(file => resolve([file]));
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const out = [];
+          const read = () => reader.readEntries(async entries => {
+            if (!entries.length) return resolve(out);
+            for (const e of entries) {
+              const nested = await traverseEntry(e);
+              out.push(...nested);
+            }
+            read();
+          });
+          read();
+        } else {
+          resolve([]);
+        }
+      });
+    }
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      const items = e.dataTransfer.items;
+      if (items && items.length && items[0].webkitGetAsEntry) {
+        let all = [];
+        for (const it of items) {
+          const entry = it.webkitGetAsEntry();
+          if (entry) {
+            const files = await traverseEntry(entry);
+            all.push(...files);
+          }
+        }
+        addFilesToList(all);
+      } else {
+        addFilesToList(e.dataTransfer.files);
+      }
+    });
+
+    document.getElementById('readyBtn').addEventListener('click', async () => {
+      const box = document.getElementById('readyJson');
+      const row = document.getElementById('statusRow');
+      try {
+        const data = await api('/api/ready');
+        box.textContent = JSON.stringify(data, null, 2);
+        row.hidden = false;
+      } catch (e) {
+        box.textContent = 'Error: ' + e.message;
+        row.hidden = false;
+      }
+    });
+
+    // Per-file upload with retries + concurrency + folder/files + dropped files
     document.getElementById('uploadBtn').addEventListener('click', async () => {
       const filesInput = document.getElementById('files');
       const folderInput = document.getElementById('folder');
       const status = document.getElementById('uploadStatus');
+      const statusRow = document.getElementById('uploadStatusRow');
       const loading = document.getElementById('uploadLoading');
       const list = document.getElementById('uploadList');
+      const listRow = document.getElementById('uploadListRow');
       status.textContent = '';
 
       const selA = filesInput?.files ? Array.from(filesInput.files) : [];
       const selB = folderInput?.files ? Array.from(folderInput.files) : [];
-      const allFiles = [...selA, ...selB];
+      const allFiles = [...selA, ...selB, ...droppedFiles];
       if (!allFiles.length) { showToast('No files selected'); return; }
 
-      // Build UI entries
       list.innerHTML = '';
-      list.hidden = false;
+      listRow.hidden = false;
+      statusRow.hidden = false;
       const entries = new Map();
       for (const f of allFiles) {
         const item = document.createElement('div');
@@ -356,29 +469,17 @@
         if (!queue.length && !inFlight.size) {
           loading.hidden = true;
           try {
-            status.textContent = JSON.stringify(results.map(r => ({
-              file: r.file.webkitRelativePath || r.file.name,
-              ok: r.ok,
-              error: r.error || null
-            })), null, 2);
+            status.textContent = JSON.stringify(results.map(r => ({ file: r.file.webkitRelativePath || r.file.name, ok: r.ok, error: r.error || null })), null, 2);
             showToast('Upload finished');
           } catch (e) {
             status.textContent = 'Upload finished (see progress list)';
           }
+          // Clear dropped files after run
+          droppedFiles = [];
         }
       }
 
       pump();
-    });
-
-    document.getElementById('readyBtn').addEventListener('click', async () => {
-      const box = document.getElementById('readyJson');
-      try {
-        const data = await api('/api/ready');
-        box.textContent = JSON.stringify(data, null, 2);
-      } catch (e) {
-        box.textContent = 'Error: ' + e.message;
-      }
     });
   </script>
 </body>

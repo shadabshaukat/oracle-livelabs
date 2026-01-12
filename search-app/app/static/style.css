@@ -31,7 +31,7 @@ input[type="number"], select { padding: 8px 10px; border: 1px solid #e5e7eb; bor
 button { padding: 10px 16px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
 button.primary { background: #2f6db5; color: #fff; border-color: #2f6db5; }
 button:hover { filter: brightness(0.98); }
-.panel { background: #0b10211a; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; width: 100%; min-height: 80px; overflow: auto; white-space: pre-wrap; }
+.panel { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; width: 100%; min-height: 80px; overflow: auto; white-space: pre-wrap; }
 .results { display: grid; grid-template-columns: 1fr; gap: 12px; width: 100%; }
 .hit { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fafbff; }
 .hit-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
