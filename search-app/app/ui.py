@@ -6,6 +6,7 @@ from typing import List
 from .search import rag, semantic_search, fulltext_search
 from .store import ensure_dirs, ingest_file_path, save_upload
 from .text_utils import ChunkParams
+from .db import get_conn
 
 
 def build_ui():
@@ -76,4 +77,25 @@ def build_ui():
 
             search_btn.click(do_search, inputs=[query, mode, topk], outputs=[answer, results])
 
-    return demo
+        with gr.Tab("Status"):
+            refresh = gr.Button("Refresh")
+            status_box = gr.JSON(label="Status")
+            counts = gr.JSON(label="Counts")
+
+            def do_status():
+                try:
+                    with get_conn() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1 FROM pg_extension WHERE extname IN ('vector','pgcrypto')")
+                            ext_ok = len(cur.fetchall()) >= 2
+                            cur.execute("SELECT count(*) FROM documents")
+                            docs = int(cur.fetchone()[0])
+                            cur.execute("SELECT count(*) FROM chunks")
+                            ch = int(cur.fetchone()[0])
+                    return {"ready": ext_ok}, {"documents": docs, "chunks": ch}
+                except Exception as e:
+                    return {"ready": False, "error": str(e)}, {}
+
+            refresh.click(do_status, inputs=[], outputs=[status_box, counts])
+
+        return demo

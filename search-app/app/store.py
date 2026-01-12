@@ -30,6 +30,9 @@ def ensure_dirs() -> None:
 
 def save_upload(file_bytes: bytes, filename: str) -> str:
     ensure_dirs()
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise ValueError(f"File too large (> {settings.max_upload_size_mb} MB)")
     safe_name = filename.replace("..", ".").replace("/", "_")
     target = Path(settings.upload_dir) / safe_name
     with open(target, "wb") as f:

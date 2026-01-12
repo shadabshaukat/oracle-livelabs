@@ -13,6 +13,7 @@ This module deploys:
   - Shape family via psql_shape_name and OCPUs via num_ocpu
   - Admin user from psql_admin
   - Admin password provided via variable or auto-generated (no Vault)
+  - Optional (default-enabled): attach an OCI PostgreSQL Configuration with overrides
 - Optional Compute Instance:
   - In the public subnet by default
   - Public IP attachment controlled by compute_assign_public_ip
@@ -32,6 +33,7 @@ Networking
 - create_service_gateway (bool, default true): Create Service Gateway
 - vcn_cidr (list(string), default ["10.10.0.0/16"]): VCN CIDR(s)
 - psql_subnet_ocid (string, default ""): Existing private subnet OCID when create_vcn_subnet=false (used for both PG and compute if you choose)
+- public_subnet_ocid (string, default ""): Existing public subnet OCID for Compute when create_vcn_subnet=false
 
 Credentials
 - psql_admin (string): PostgreSQL admin username (required)
@@ -56,6 +58,23 @@ Compute (optional)
 - compute_nsg_ids (list(string), default []): Optional NSG OCIDs to attach
 - compute_boot_volume_size_in_gbs (number, default 50)
 
+### PostgreSQL Configuration (default-enabled)
+
+This stack can create and attach an OCI PostgreSQL configuration to the DB System. By default, a configuration is created with common extensions and parameters unless you provide an existing configuration OCID.
+
+- create_psql_configuration (bool, default true): Create a new configuration
+- psql_configuration_ocid (string, default ""): If non-empty, use this existing configuration and skip creation
+- psql_config_display_name (string, default "livelab_flexible_configuration")
+- psql_config_is_flexible (bool, default true)
+- psql_config_compatible_shapes (list(string), defaults include Flex shapes)
+- psql_config_description (string, default "test configuration created by terraform")
+- psql_config_overrides (map(string), default): key/value overrides rendered as items under db_configuration_overrides. Defaults include:
+  - oci.admin_enabled_extensions = "pg_stat_statements,pglogical"
+  - pglogical.conflict_log_level = "debug1"
+  - pg_stat_statements.max = "5000"
+
+The DB System config_id is set to the created configuration’s OCID by default, or to psql_configuration_ocid if you provide one.
+
 ## Behavior Notes
 
 - PostgreSQL password handling:
@@ -73,6 +92,7 @@ Compute (optional)
 ## Outputs
 
 - psql_admin_pwd (sensitive): Final PostgreSQL admin password (provided or generated)
+- psql_configuration_id: OCID of the configuration (created or provided), if applicable
 - compute_instance_id: OCID of the compute instance (if created)
 - compute_state: Lifecycle state of the compute instance (if created)
 - compute_public_ip: Public IP of the compute instance (if created and assigned)
@@ -81,8 +101,11 @@ Compute (optional)
 
 - Create a Stack from this directory (oci_postgres_tf_stack) or ZIP it and upload.
 - Provide required variables (compartment_ocid, psql_admin). Optional: psql_admin_password; if omitted, a random password is generated.
+- PostgreSQL Configuration (optional/default-enabled):
+  - To create a configuration: leave psql_configuration_ocid blank (default), keep create_psql_configuration=true (default), and review psql_config_overrides
+  - To use an existing configuration: set psql_configuration_ocid to your config OCID
 - For Compute, set create_compute=true and provide compute_ssh_public_key.
-- Plan and Apply. Retrieve the psql_admin_pwd value from the Job outputs (sensitive).
+- Plan and Apply. Retrieve the psql_admin_pwd and psql_configuration_id from the Job outputs.
 
 ## Known Considerations
 

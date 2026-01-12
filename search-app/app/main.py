@@ -45,6 +45,31 @@ def on_startup():
 def health():
     return {"status": "ok"}
 
+@app.get("/api/ready")
+def ready():
+    """DB and schema readiness check: extensions, tables, and indexes."""
+    from .db import get_conn
+    checks = {"extensions": False, "documents_table": False, "chunks_table": False, "tsv_index": False, "vec_index": False}
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                # Extensions
+                cur.execute("SELECT 1 FROM pg_extension WHERE extname IN ('vector','pgcrypto')")
+                checks["extensions"] = len(cur.fetchall()) >= 2
+                # Tables
+                cur.execute("SELECT to_regclass('public.documents') IS NOT NULL")
+                checks["documents_table"] = bool(cur.fetchone()[0])
+                cur.execute("SELECT to_regclass('public.chunks') IS NOT NULL")
+                checks["chunks_table"] = bool(cur.fetchone()[0])
+                # Indexes
+                cur.execute("SELECT to_regclass('public.idx_chunks_tsv') IS NOT NULL")
+                checks["tsv_index"] = bool(cur.fetchone()[0])
+                cur.execute("SELECT to_regclass('public.idx_chunks_embedding_ivfflat') IS NOT NULL")
+                checks["vec_index"] = bool(cur.fetchone()[0])
+        return {"ready": all(checks.values()), **checks}
+    except Exception as e:
+        return {"ready": False, "error": str(e), **checks}
+
 
 @app.post("/api/upload")
 async def upload(files: List[UploadFile] = File(...)):

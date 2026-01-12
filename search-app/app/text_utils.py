@@ -8,6 +8,7 @@ from typing import List, Tuple
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from docx import Document
+from .config import settings
 
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -39,6 +40,18 @@ def read_text_from_file(path: str) -> Tuple[str, str]:
 
 
 def extract_text_from_pdf(path: str) -> str:
+    # Optional: use PyMuPDF if enabled and available for better extraction
+    if getattr(settings, "use_pymupdf", False):
+        try:
+            import fitz  # PyMuPDF
+            text_list: List[str] = []
+            with fitz.open(path) as doc:
+                for page in doc:
+                    text_list.append(page.get_text("text") or "")
+            return "\n".join(t.strip() for t in text_list if t)
+        except Exception:
+            # Fall back to pypdf if PyMuPDF is not available or fails
+            pass
     reader = PdfReader(path)
     texts: List[str] = []
     for page in reader.pages:

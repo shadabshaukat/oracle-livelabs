@@ -87,6 +87,7 @@ Environment variables (see .env.example):
 ## Endpoints
 
 - GET /api/health
+- GET /api/ready (DB readiness: checks extensions, tables, and indexes)
 - POST /api/upload (multipart) files[]
 - POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k }
 
@@ -94,7 +95,7 @@ Gradio UI is available at /ui with Upload and Search tabs.
 
 ## Security Notes
 
-- All API and UI routes are protected with HTTP Basic Auth via BASIC_AUTH_USER/PASSWORD.
+- All API and UI routes are protected with HTTP Basic Auth via BASIC_AUTH_USER/PASSWORD (including /docs, /openapi.json, /redoc).
 - CORS is enabled by default; restrict ALLOW_CORS in production.
 - The upload endpoint writes files to storage/uploads; ensure filesystem quotas and scanning if needed.
 - Use SSL to your PostgreSQL (sslmode=require by default).

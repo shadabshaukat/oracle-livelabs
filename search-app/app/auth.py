@@ -10,7 +10,7 @@ from .config import settings
 
 
 class BasicAuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, protect_paths: tuple[str, ...] = ("/api", "/ui")):
+    def __init__(self, app, protect_paths: tuple[str, ...] = ("/api", "/ui", "/docs", "/openapi.json", "/redoc")):
         super().__init__(app)
         self.protect_paths = protect_paths
 
