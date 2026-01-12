@@ -50,7 +50,7 @@ This starts FastAPI at http://0.0.0.0:8000 and Gradio UI at http://0.0.0.0:8000/
 
 ```bash
 # Install OS packages
-sudo dnf install -y curl git unzip firewalld
+sudo dnf install -y curl git unzip firewalld oraclelinux-developer-release-el10 python3-oci-cli
 
 # Install uv (user-local) and add to PATH
 curl -LsSf https://astral.sh/uv/install.sh | sh
