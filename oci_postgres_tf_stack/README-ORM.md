@@ -80,10 +80,34 @@ Compute (optional small instance added with this iteration):
 - compute_image_ocid: Optional image OCID to use; if blank the latest Oracle Linux image compatible with the shape will be selected automatically.
 - compute_nsg_ids: Optional list of NSG OCIDs to attach to the VNIC (default: [])
 
+### PostgreSQL Configuration (optional)
+
+This stack can optionally create and attach an OCI PostgreSQL configuration. The configuration is created only if:
+- create_psql_configuration = true
+- psql_configuration_ocid = "" (blank)
+- psql_config_overrides contains at least one entry
+
+Inputs:
+- create_psql_configuration (bool, default false): Create a new configuration
+- psql_configuration_ocid (string, default ""): Use an existing configuration OCID (skips creation)
+- psql_config_display_name (string, default "psql_flex_config")
+- psql_config_is_flexible (bool, default true)
+- psql_config_compatible_shapes (list(string), defaults include Flex shapes)
+- psql_config_description (string)
+- psql_config_overrides (map(string)) key/value overrides rendered as items under db_configuration_overrides
+
+Example overrides:
+```
+psql_config_overrides = {
+  "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical"
+  "pglogical.conflict_log_level" = "debug1"
+  "pg_stat_statements.max"       = "5000"
+}
+```
+
 Notes:
-- If create_vcn_subnet=false, provide psql_subnet_ocid of an existing private subnet to place both the PostgreSQL service and the compute instance.
-- Access to the compute instance in a private subnet typically requires Bastion service, VPN/DRG, or peering. The default security list allows inbound SSH (22), but the subnet prohibits public IPs, so there is no public internet ingress to the instance unless you change the design.
-- Availability Domains are discovered dynamically for the selected region and the first available AD is used. This avoids failures in regions with a single AD or differing AD counts.
+- If you provide psql_configuration_ocid, the DB System will use that config_id and the resource will not be created.
+- If overrides are empty, no configuration resource will be created (to satisfy provider requirements that at least one items block is present when the block exists).
 
 ## Outputs
 
@@ -91,6 +115,7 @@ Notes:
 - compute_instance_id: OCID of the compute instance (if created)
 - compute_state: Lifecycle state of the compute instance (if created)
 - compute_public_ip: Public IP of the compute instance (if created and assigned)
+- psql_configuration_id: OCID of the configuration (created or provided), if applicable
 
 ## Deploying via Oracle Resource Manager
 
@@ -109,6 +134,9 @@ Notes:
      - Required: compartment_ocid, psql_admin
      - Optional: region (defaults to us-ashburn-1), create_vcn_subnet, create_service_gateway, etc.
      - Compute: set create_compute, compute_ssh_public_key (recommended), and others as needed
+     - PostgreSQL Configuration (optional):
+       - To create a configuration: set create_psql_configuration=true, leave psql_configuration_ocid blank, and provide psql_config_overrides (map)
+       - To use an existing configuration: set psql_configuration_ocid to your config OCID
 
 3. Create the Stack.
 
@@ -120,6 +148,7 @@ Notes:
    - After Apply completes, navigate to the Job details to see Outputs:
      - psql_admin_pwd (sensitive)
      - compute_instance_id (if compute created)
+     - psql_configuration_id (if a configuration was created or provided)
 
 ## Updating the Stack to add the small Compute instance
 
@@ -142,8 +171,8 @@ The compute instance is created in the public subnet by default. For private-onl
 
 - If plan/apply fails due to permissions, ensure the compartment policy allows Resource Manager to manage the required resources.
 - Ensure the compartment policy allows Resource Manager to manage resources in the compartment.
+- If you intend to create a PostgreSQL configuration but none appears in the plan: confirm that `create_psql_configuration=true`, `psql_configuration_ocid` is blank, and `psql_config_overrides` has at least one entry.
 - If not creating VCN/subnet, verify your provided subnet OCID is in the compartment and region specified and is private.
-
 
 ## Notes on Security
 
@@ -155,4 +184,5 @@ The compute instance is created in the public subnet by default. For private-onl
 You can also run the stack with Terraform CLI:
 - cd oci_postgres_tf_stack
 - terraform init
-- terraform apply -var='compartment_ocid=<ocid>' -var='psql_admin=<name>' [-var-file=<file>]
+- terraform plan -var='compartment_ocid=<ocid>' -var='psql_admin=<name>' -var-file=example.tfvars
+- terraform apply -var='compartment_ocid=<ocid>' -var='psql_admin=<name>' -var-file=example.tfvars

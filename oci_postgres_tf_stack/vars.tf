@@ -143,3 +143,61 @@ variable "compute_boot_volume_size_in_gbs" {
   default = 50
 }
 
+## OCI PostgreSQL Configuration (optional)
+
+variable "create_psql_configuration" {
+  type        = bool
+  description = "Whether to create an OCI PostgreSQL configuration in this stack"
+  default     = true
+}
+
+variable "psql_configuration_ocid" {
+  type        = string
+  description = "Existing OCI PostgreSQL configuration OCID to use (if provided, skips creation)"
+  default     = ""
+}
+
+variable "psql_config_display_name" {
+  type        = string
+  description = "Display name for the OCI PostgreSQL configuration (when created)"
+  default     = "livelab_flexible_configuration"
+}
+
+variable "psql_config_is_flexible" {
+  type        = bool
+  description = "Whether the configuration is flexible"
+  default     = true
+}
+
+variable "psql_config_compatible_shapes" {
+  type        = list(string)
+  description = "List of compatible shapes for the configuration"
+  default     = [
+    "VM.Standard.E5.Flex",
+    "VM.Standard.E6.Flex",
+    "VM.Standard3.Flex"
+  ]
+}
+
+variable "psql_config_description" {
+  type        = string
+  description = "Description for the PostgreSQL configuration"
+  default     = "test configuration created by terraform"
+}
+
+# Map of config_key => overridden_config_value
+# Example:
+# {
+#   "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical"
+#   "pglogical.conflict_log_level" = "debug1"
+#   "pg_stat_statements.max"       = "5000"
+# }
+variable "psql_config_overrides" {
+  type        = map(string)
+  description = "Configuration overrides as key/value pairs"
+  default     = {
+    "oci.admin_enabled_extensions" = "pg_stat_statements,pglogical"
+    "pglogical.conflict_log_level" = "debug1"
+    "pg_stat_statements.max"       = "5000"
+  }
+}

@@ -5,7 +5,7 @@
 
 resource oci_psql_db_system psql_inst_1 {
   compartment_id = var.compartment_ocid
-  #config_id      = 
+  config_id      = var.psql_configuration_ocid != "" ? var.psql_configuration_ocid : (length(oci_psql_configuration.psql_flex_config) > 0 ? oci_psql_configuration.psql_flex_config[0].id : null)
   db_version = var.psql_version
   #admin_username = var.psql_admin
   #credentials =  random_string.psql_admin_password.result 
@@ -44,4 +44,3 @@ resource oci_psql_db_system psql_inst_1 {
   }
   system_type = "OCI_OPTIMIZED_STORAGE"
 }
-
