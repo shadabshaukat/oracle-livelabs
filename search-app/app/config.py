@@ -34,6 +34,7 @@ class Settings:
     # Storage
     data_dir: str = os.getenv("DATA_DIR", "storage")
     upload_dir: str = os.getenv("UPLOAD_DIR", "storage/uploads")
+    model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", "storage/models")
     # Upload & parsing
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
     use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)

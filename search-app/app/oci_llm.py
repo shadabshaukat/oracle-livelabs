@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Optional
 
@@ -47,9 +48,20 @@ def _build_oci_clients():
         return None, None
 
 
+def _safe_build(model_cls, **kwargs):
+    """Construct model by filtering kwargs to supported parameters (SDK compatibility)."""
+    try:
+        sig = inspect.signature(model_cls.__init__)
+        allowed = {k: v for k, v in kwargs.items() if k in sig.parameters}
+        return model_cls(**allowed)
+    except Exception:
+        # Last resort: try empty construction
+        return model_cls()
+
+
 def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
     client, _ = _build_oci_clients()
-    if client is None:
+    if client is None or settings.llm_provider != "oci":
         return None
 
     try:
@@ -63,23 +75,34 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             f"Question: {question}\n\nContext:\n{context[:12000]}"
         )
 
+        # Try chat() path first if available
         try:
             from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
-            details = ChatDetails(
+            details = _safe_build(
+                ChatDetails,
                 compartment_id=comp_id,
                 model_id=model_id,
-                messages=[Message(role="USER", content=[TextContent(text=prompt)])],
+                messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
             resp = client.chat(details)
             out = getattr(resp.data, "output_text", None)
             if not out and getattr(resp.data, "choices", None):
-                out = resp.data.choices[0].message.content[0].text
-            return out
-        except Exception:
+                try:
+                    out = resp.data.choices[0].message.content[0].text
+                except Exception:
+                    pass
+            if out:
+                return out
+        except Exception as e:
+            logger.debug("OCI chat() path not available: %s", e)
+
+        # Fallback to generate_text()
+        try:
             from oci.generative_ai_inference.models import GenerateTextDetails
-            details = GenerateTextDetails(
+            details = _safe_build(
+                GenerateTextDetails,
                 compartment_id=comp_id,
                 model_id=model_id,
                 prompt=prompt,
@@ -89,6 +112,9 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             resp = client.generate_text(details)
             out = getattr(resp.data, "output_text", None)
             return out
+        except Exception as e:
+            logger.debug("OCI generate_text() path failed: %s", e)
+            return None
     except Exception as e:
         logger.exception("OCI GenAI call failed: %s", e)
         return None

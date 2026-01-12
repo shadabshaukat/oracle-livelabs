@@ -26,6 +26,7 @@ class IngestResult:
 def ensure_dirs() -> None:
     Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.model_cache_dir).mkdir(parents=True, exist_ok=True)
 
 
 def save_upload(file_bytes: bytes, filename: str) -> str:
