@@ -1,7 +1,7 @@
-# Enterprise Search App (Gradio + FastAPI + OCI PostgreSQL + pgvector)
+# Enterprise Search App (FastAPI + OCI PostgreSQL + pgvector)
 
 An enterprise-grade, self-hosted search and RAG application featuring:
-- Gradio UI for uploads and search
+- Minimal FastAPI + Jinja UI for uploads and search
 - FastAPI backend
 - OCI PostgreSQL with pgvector for embeddings and GIN for full-text
 - Multi-mode retrieval: Semantic, Full-text, Hybrid, and RAG
@@ -44,7 +44,7 @@ cp .env.example .env
 uv sync && uv run searchapp
 ```
 
-This starts FastAPI at http://0.0.0.0:8000 and Gradio UI at http://0.0.0.0:8000/ui
+This starts FastAPI at http://0.0.0.0:8000. The UI is available at http://0.0.0.0:8000/
 
 ## Oracle Linux 8 prerequisites and firewall
 
@@ -66,7 +66,7 @@ sudo firewall-cmd --reload
 
 Environment variables (see .env.example):
 - DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD
-- Security: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD (protects /api and /ui)
+- Security: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD (protects / and /api)
 - EMBEDDING_MODEL, EMBEDDING_DIM (default MiniLM 384)
 - PGVECTOR_METRIC (cosine|l2|ip), PGVECTOR_LISTS (~sqrt(n)), PGVECTOR_PROBES (runtime probes)
 - FTS_CONFIG (default english)
@@ -91,7 +91,7 @@ Environment variables (see .env.example):
 - POST /api/upload (multipart) files[]
 - POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k }
 
-Gradio UI is available at /ui with Upload and Search tabs.
+Minimal UI is available at / (root) with Search, Upload and Status sections.
 
 ## Security Notes
 
@@ -103,7 +103,7 @@ Gradio UI is available at /ui with Upload and Search tabs.
 ## Chunking strategy
 
 - Uses a recursive character splitter inspired by LangChain's RecursiveCharacterTextSplitter with separators (\n\n, \n, ". ", " ", "").
-- Configurable chunk_size and chunk_overlap in the UI for ingestion.
+- Defaults: chunk_size=1000 and chunk_overlap=200 (adjust in code if needed).
 - Supports PDF, HTML, TXT, and DOCX extraction.
 
 ## Idempotent schema

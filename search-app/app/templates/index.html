@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Enterprise Search App</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Enterprise Search</h1>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>Search</h2>
+      <div class="row">
+        <label for="query">Query</label>
+        <textarea id="query" rows="3" placeholder="Ask or search..."></textarea>
+      </div>
+      <div class="row">
+        <label for="mode">Mode</label>
+        <select id="mode">
+          <option value="hybrid" selected>Hybrid</option>
+          <option value="semantic">Semantic</option>
+          <option value="fulltext">Full-text</option>
+          <option value="rag">RAG</option>
+        </select>
+        <label for="topk" class="leftpad">Top K</label>
+        <input id="topk" type="number" value="6" min="1" max="20" />
+        <button id="searchBtn" class="primary">Search</button>
+      </div>
+      <div class="row">
+        <label>Answer / Context</label>
+        <pre id="answer" class="panel"></pre>
+      </div>
+      <div class="row">
+        <label>Results</label>
+        <div id="results" class="results"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Upload</h2>
+      <div class="row">
+        <input id="files" type="file" multiple />
+        <button id="uploadBtn">Upload & Ingest</button>
+      </div>
+      <div class="row">
+        <pre id="uploadStatus" class="panel"></pre>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Status</h2>
+      <div class="row">
+        <button id="readyBtn">Check Ready</button>
+      </div>
+      <div class="row cols">
+        <pre id="readyJson" class="panel"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    async function api(path, opts={}) {
+      const res = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    function renderResults(hits) {
+      const wrap = document.getElementById('results');
+      wrap.innerHTML = '';
+      if (!hits || !hits.length) {
+        wrap.textContent = 'No results';
+        return;
+      }
+      for (const h of hits) {
+        const div = document.createElement('div');
+        div.className = 'hit';
+        const meta = [];
+        if (h.title) meta.push(h.title);
+        if (h.source_path) meta.push(h.source_path);
+        const metaLine = meta.join(' — ');
+        div.innerHTML = `
+          <div class="hit-meta">${metaLine}</div>
+          <div class="hit-content">${(h.content || '').replace(/</g,'<')}</div>
+          <div class="hit-scores">${h.distance !== null && h.distance !== undefined ? `distance: ${h.distance}` : ''} ${h.rank !== null && h.rank !== undefined ? `rank: ${h.rank}` : ''}</div>
+        `;
+        wrap.appendChild(div);
+      }
+    }
+
+    document.getElementById('searchBtn').addEventListener('click', async () => {
+      const query = document.getElementById('query').value.trim();
+      const mode = document.getElementById('mode').value;
+      const topk = parseInt(document.getElementById('topk').value || '6', 10);
+      const ans = document.getElementById('answer');
+      ans.textContent = '';
+      try {
+        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk } });
+        if (data.answer) ans.textContent = data.answer;
+        renderResults(data.hits);
+      } catch (e) {
+        ans.textContent = 'Error: ' + e.message;
+      }
+    });
+
+    document.getElementById('uploadBtn').addEventListener('click', async () => {
+      const input = document.getElementById('files');
+      const status = document.getElementById('uploadStatus');
+      status.textContent = '';
+      const files = input.files;
+      if (!files || !files.length) { status.textContent = 'No files selected'; return; }
+      const form = new FormData();
+      for (const f of files) form.append('files', f);
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: form });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        status.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+      }
+    });
+
+    document.getElementById('readyBtn').addEventListener('click', async () => {
+      const box = document.getElementById('readyJson');
+      try {
+        const data = await api('/api/ready');
+        box.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        box.textContent = 'Error: ' + e.message;
+      }
+    });
+  </script>
+</body>
+</html>

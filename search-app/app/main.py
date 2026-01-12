@@ -2,28 +2,35 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, List
 
-import gradio as gr
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 import uvicorn
 
 from .auth import BasicAuthMiddleware
 from .config import settings
-from .db import init_db
+from .db import init_db, get_conn
 from .store import ensure_dirs, ingest_file_path, save_upload
-from .ui import build_ui
 from .search import semantic_search, fulltext_search, hybrid_search, rag
 
 logger = logging.getLogger("searchapp")
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 
 
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
 app = FastAPI(title="Enterprise Search App", version="0.1.0")
-# Protect API, UI, and docs as described in README (defaults in middleware already include docs)
-app.add_middleware(BasicAuthMiddleware)
+# Protect root UI and API with Basic Auth
+app.add_middleware(BasicAuthMiddleware, protect_paths=("/", "/api", "/docs", "/openapi.json", "/redoc"))
 
 if settings.allow_cors:
     app.add_middleware(
@@ -34,6 +41,10 @@ if settings.allow_cors:
         allow_headers=["*"],
     )
 
+# Static and templates
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 
 @app.on_event("startup")
 def on_startup():
@@ -42,27 +53,30 @@ def on_startup():
     logger.info("Startup complete: directories ensured and database initialized")
 
 
+# UI route (minimalist, responsive search app)
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+# API routes
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
 
+
 @app.get("/api/ready")
 def ready():
-    """DB and schema readiness check: extensions, tables, and indexes."""
-    from .db import get_conn
     checks = {"extensions": False, "documents_table": False, "chunks_table": False, "tsv_index": False, "vec_index": False}
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # Extensions
                 cur.execute("SELECT 1 FROM pg_extension WHERE extname IN ('vector','pgcrypto')")
                 checks["extensions"] = len(cur.fetchall()) >= 2
-                # Tables
                 cur.execute("SELECT to_regclass('public.documents') IS NOT NULL")
                 checks["documents_table"] = bool(cur.fetchone()[0])
                 cur.execute("SELECT to_regclass('public.chunks') IS NOT NULL")
                 checks["chunks_table"] = bool(cur.fetchone()[0])
-                # Indexes
                 cur.execute("SELECT to_regclass('public.idx_chunks_tsv') IS NOT NULL")
                 checks["tsv_index"] = bool(cur.fetchone()[0])
                 cur.execute("SELECT to_regclass('public.idx_chunks_embedding_ivfflat') IS NOT NULL")
@@ -91,21 +105,47 @@ async def api_search(payload: Dict[str, Any]):
     if not q:
         return JSONResponse(status_code=400, content={"error": "query required"})
 
+    answer: str | None = None
     if mode == "semantic":
         hits = semantic_search(q, top_k=top_k)
-        return {"mode": mode, "hits": [h.__dict__ for h in hits]}
-    if mode == "fulltext":
+    elif mode == "fulltext":
         hits = fulltext_search(q, top_k=top_k)
-        return {"mode": mode, "hits": [h.__dict__ for h in hits]}
-    if mode == "rag":
+    elif mode == "rag":
         answer, hits = rag(q, mode="hybrid", top_k=top_k)
-        return {"mode": mode, "answer": answer, "hits": [h.__dict__ for h in hits]}
-    hits = hybrid_search(q, top_k=top_k)
-    return {"mode": "hybrid", "hits": [h.__dict__ for h in hits]}
+    else:
+        hits = hybrid_search(q, top_k=top_k)
 
+    # Enrich with document metadata (source_path, title)
+    doc_ids = sorted({h.document_id for h in hits})
+    doc_info: Dict[int, Dict[str, Any]] = {}
+    if doc_ids:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, source_path, COALESCE(title, '') FROM documents WHERE id = ANY(%s)", (doc_ids,)
+                )
+                for row in cur.fetchall():
+                    doc_info[int(row[0])] = {"source_path": row[1], "title": row[2]}
 
-ui = build_ui()
-app = gr.mount_gradio_app(app, ui, path="/ui")
+    hits_out = []
+    for h in hits:
+        entry = {
+            "chunk_id": h.chunk_id,
+            "document_id": h.document_id,
+            "chunk_index": h.chunk_index,
+            "content": h.content,
+            "distance": h.distance,
+            "rank": h.rank,
+        }
+        meta = doc_info.get(h.document_id)
+        if meta:
+            entry.update(meta)
+        hits_out.append(entry)
+
+    out: Dict[str, Any] = {"mode": mode if mode in {"semantic", "fulltext", "rag"} else "hybrid", "hits": hits_out}
+    if answer is not None:
+        out["answer"] = answer
+    return out
 
 
 def main():
