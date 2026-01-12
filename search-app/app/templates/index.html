@@ -12,34 +12,46 @@
   </header>
 
   <main class="container">
-    <section class="card card--wide">
-      <h2>Search</h2>
-      <div class="row">
-        <label for="query" class="block">Query</label>
-        <textarea id="query" rows="3" placeholder="Ask or search..."></textarea>
+    <!-- Hero: Google-like minimalist landing -->
+    <section class="card card--wide hero">
+      <div class="logo" aria-label="SEARCH">
+        <span class="g g-blue">S</span>
+        <span class="g g-red">E</span>
+        <span class="g g-yellow">A</span>
+        <span class="g g-blue">R</span>
+        <span class="g g-green">C</span>
+        <span class="g g-red">H</span>
       </div>
-      <div class="row wrap">
-        <div class="row no-grow">
-          <label for="mode">Mode</label>
-          <select id="mode">
-            <option value="hybrid" selected>Hybrid</option>
-            <option value="semantic">Semantic</option>
-            <option value="fulltext">Full-text</option>
-            <option value="rag">RAG</option>
-          </select>
-        </div>
-        <div class="row no-grow">
-          <label for="topk" class="leftpad">Top K</label>
-          <input id="topk" type="number" value="6" min="1" max="50" />
-        </div>
-        <div class="row no-grow">
-          <label for="autoSearch" class="leftpad">Auto search</label>
-          <input id="autoSearch" type="checkbox" checked />
-          <label for="debounceMs" class="leftpad">Debounce (ms)</label>
-          <input id="debounceMs" type="number" value="400" min="100" max="2000" />
-        </div>
-        <div class="row no-grow push-right">
+
+      <div class="searchbar">
+        <input id="query" class="search-input" type="text" placeholder="Search..." />
+        <div class="search-actions">
           <button id="searchBtn" class="primary">Search</button>
+          <button id="settingsBtn" class="ghost" title="Settings" aria-expanded="false">⚙️</button>
+        </div>
+      </div>
+
+      <div id="settingsPanel" class="settings" hidden>
+        <div class="row wrap">
+          <div class="row no-grow">
+            <label for="mode">Mode</label>
+            <select id="mode">
+              <option value="hybrid" selected>Hybrid</option>
+              <option value="semantic">Semantic</option>
+              <option value="fulltext">Full-text</option>
+              <option value="rag">RAG</option>
+            </select>
+          </div>
+          <div class="row no-grow">
+            <label for="topk" class="leftpad">Top K</label>
+            <input id="topk" type="number" value="6" min="1" max="50" />
+          </div>
+          <div class="row no-grow">
+            <label for="autoSearch" class="leftpad">Auto search</label>
+            <input id="autoSearch" type="checkbox" checked />
+            <label for="debounceMs" class="leftpad">Debounce (ms)</label>
+            <input id="debounceMs" type="number" value="400" min="100" max="2000" />
+          </div>
         </div>
       </div>
 
@@ -60,6 +72,7 @@
       </div>
     </section>
 
+    <!-- Upload -->
     <section class="card">
       <h2>Upload</h2>
       <div class="row wrap">
@@ -75,6 +88,7 @@
       </div>
     </section>
 
+    <!-- Status -->
     <section class="card">
       <h2>Status</h2>
       <div class="row">
@@ -109,14 +123,6 @@
       } catch {
         return escapeHtml(text);
       }
-    }
-
-    function debounce(fn, delay) {
-      let timer = null;
-      return (...args) => {
-        clearTimeout(timer);
-        timer = setTimeout(() => fn(...args), delay);
-      };
     }
 
     async function api(path, opts={}) {
@@ -157,6 +163,7 @@
     }
 
     let currentSearchController = null;
+    let searchTimer = null;
 
     async function doSearch() {
       const query = document.getElementById('query').value.trim();
@@ -193,19 +200,14 @@
       }
     }
 
-    const debouncedSearch = debounce(() => doSearch().catch(console.error), parseInt(document.getElementById('debounceMs').value, 10));
-
     document.getElementById('searchBtn').addEventListener('click', () => doSearch());
 
     document.getElementById('query').addEventListener('input', () => {
-      const auto = document.getElementById('autoSearch').checked;
-      const delay = parseInt(document.getElementById('debounceMs').value || '400', 10);
+      const auto = document.getElementById('autoSearch')?.checked ?? true;
+      const delay = parseInt(document.getElementById('debounceMs')?.value || '400', 10);
       if (auto) {
-        // update debounce delay dynamically
-        debouncedSearch.delay = delay;
-        // re-wrap with new delay
-        const fn = debounce(() => doSearch().catch(console.error), delay);
-        fn();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => doSearch().catch(console.error), delay);
       }
     });
 
@@ -214,6 +216,14 @@
     });
     document.getElementById('topk').addEventListener('change', () => {
       if (document.getElementById('autoSearch').checked) doSearch();
+    });
+
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+      const p = document.getElementById('settingsPanel');
+      const b = document.getElementById('settingsBtn');
+      const nowHidden = !p.hidden;
+      p.hidden = nowHidden;
+      b.setAttribute('aria-expanded', String(!nowHidden));
     });
 
     document.getElementById('uploadBtn').addEventListener('click', async () => {
