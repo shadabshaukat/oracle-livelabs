@@ -33,10 +33,7 @@ button { padding: 10px 16px; border-radius: 10px; border: 1px solid #d1d5db; bac
 button.primary { background: #2f6db5; color: #fff; border-color: #2f6db5; }
 button:hover { filter: brightness(0.98); }
 
-/* Label buttons (for hidden file inputs) */
-.btn { display: inline-block; padding: 10px 16px; border-radius: 10px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; user-select: none; }
-.btn.primary { background: #2f6db5; color: #fff; border-color: #2f6db5; }
-.btn:hover { filter: brightness(0.98); }
+
 .panel { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; width: 100%; min-height: 80px; overflow: auto; white-space: pre-wrap; }
 .results { display: grid; grid-template-columns: 1fr; gap: 12px; width: 100%; }
 .hit { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fafbff; }
@@ -62,10 +59,7 @@ button:hover { filter: brightness(0.98); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (min-width: 900px) { .container { grid-template-columns: 1fr 1fr; } .card--wide { grid-column: 1 / span 2; } }
 
-/* Status lamp */
-.lamp { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid #d1d5db; background: #e5e7eb; vertical-align: middle; margin-left: 8px; }
-.lamp.green { background: #16a34a; border-color: #16a34a; }
-.lamp.red { background: #dc2626; border-color: #dc2626; }
+
 
 /* Dark mode */
 body.dark { background: #0f172a; color: #e5e7eb; }
