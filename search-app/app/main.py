@@ -178,6 +178,62 @@ async def api_search(payload: Dict[str, Any]):
     return out
 
 
+@app.post("/api/llm-test")
+async def llm_test(payload: Dict[str, Any] | None = None):
+    """
+    Simple LLM connectivity test. POST a JSON body like:
+    { "question": "...", "context": "..." }
+    If omitted, a default question/context is used. Returns provider, ok flag, and answer text.
+    """
+    q = (payload or {}).get("question") if payload else None
+    ctx = (payload or {}).get("context") if payload else None
+    if not q:
+        q = "Test connectivity. Summarize the following context in one sentence."
+    if not ctx:
+        ctx = "This is a test context from the /api/llm-test endpoint."
+
+    provider = settings.llm_provider
+    answer: str | None = None
+    error: str | None = None
+    try:
+        if provider == "openai" and settings.openai_api_key:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=settings.openai_api_key)
+                prompt = (
+                    "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
+                    f"Question: {q}\n\nContext:\n{ctx[:12000]}"
+                )
+                resp = client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=256,
+                )
+                answer = resp.choices[0].message.content
+            except Exception as e:
+                error = str(e)
+        elif provider == "oci":
+            try:
+                from .oci_llm import oci_chat_completion
+                answer = oci_chat_completion(q, ctx)
+            except Exception as e:
+                error = str(e)
+        else:
+            error = "LLM provider inactive or missing credentials"
+    except Exception as e:
+        error = str(e)
+
+    return {
+        "provider": provider,
+        "ok": bool(answer),
+        "answer": answer,
+        "question": q,
+        "context_chars": len(ctx or ""),
+        "error": error,
+    }
+
+
 def main():
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, workers=settings.workers, reload=False)
 

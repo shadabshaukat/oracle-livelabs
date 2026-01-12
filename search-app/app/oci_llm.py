@@ -20,18 +20,28 @@ def _build_oci_clients():
     config = None
     signer = None
 
+    # Config-file auth
     if settings.oci_config_file:
         try:
+            import oci
             config = oci.config.from_file(settings.oci_config_file, settings.oci_config_profile)
             if settings.oci_region:
                 config["region"] = settings.oci_region
             client = GenerativeAiInferenceClient(config=config, service_endpoint=settings.oci_genai_endpoint)
+            logger.info("OCI client initialized via config file (profile=%s)", settings.oci_config_profile)
             return client, None
         except Exception as e:
             logger.exception("Failed to init OCI client from config file: %s", e)
 
+    # API-key signer auth
     try:
-        if not all([settings.oci_tenancy_ocid, settings.oci_user_ocid, settings.oci_fingerprint, settings.oci_private_key_path, settings.oci_region]):
+        if not all([
+            settings.oci_tenancy_ocid,
+            settings.oci_user_ocid,
+            settings.oci_fingerprint,
+            settings.oci_private_key_path,
+            settings.oci_region,
+        ]):
             raise ValueError("Missing OCI API key envs (TENANCY, USER, FINGERPRINT, PRIVATE_KEY_PATH, REGION)")
         import oci
         signer = oci.signer.Signer(
@@ -41,7 +51,10 @@ def _build_oci_clients():
             private_key_file_location=settings.oci_private_key_path,
             pass_phrase=settings.oci_private_key_passphrase,
         )
-        client = GenerativeAiInferenceClient(config={"region": settings.oci_region}, signer=signer, service_endpoint=settings.oci_genai_endpoint)
+        client = GenerativeAiInferenceClient(
+            config={"region": settings.oci_region}, signer=signer, service_endpoint=settings.oci_genai_endpoint
+        )
+        logger.info("OCI client initialized via API key signer (region=%s)", settings.oci_region)
         return client, signer
     except Exception as e:
         logger.exception("Failed to init OCI client via API key signer: %s", e)
@@ -59,9 +72,53 @@ def _safe_build(model_cls, **kwargs):
         return model_cls()
 
 
+def _extract_text_from_oci_response(data) -> Optional[str]:
+    """Attempt to extract text from various possible OCI GenAI response shapes."""
+    try:
+        # Common fields
+        out = getattr(data, "output_text", None)
+        if out:
+            return out
+        out = getattr(data, "generated_text", None)
+        if out:
+            return out
+
+        # Chat-style choices
+        choices = getattr(data, "choices", None)
+        if choices:
+            try:
+                # Chat format: choices[0].message.content[0].text
+                msg = choices[0].message
+                content = getattr(msg, "content", None)
+                if content and len(content) and hasattr(content[0], "text"):
+                    return content[0].text
+            except Exception:
+                pass
+            try:
+                # Text format: choices[0].text
+                txt = getattr(choices[0], "text", None)
+                if txt:
+                    return txt
+            except Exception:
+                pass
+
+        # Content array with text
+        content = getattr(data, "content", None)
+        if content and len(content):
+            try:
+                if hasattr(content[0], "text"):
+                    return content[0].text
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug("Failed to extract OCI response text: %s", e)
+    return None
+
+
 def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
     client, _ = _build_oci_clients()
     if client is None or settings.llm_provider != "oci":
+        logger.warning("OCI LLM inactive (provider=%s, client=%s)", settings.llm_provider, bool(client))
         return None
 
     try:
@@ -75,7 +132,7 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             f"Question: {question}\n\nContext:\n{context[:12000]}"
         )
 
-        # Try chat() path first if available
+        # Try chat() path first
         try:
             from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
             details = _safe_build(
@@ -87,16 +144,13 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 temperature=temperature,
             )
             resp = client.chat(details)
-            out = getattr(resp.data, "output_text", None)
-            if not out and getattr(resp.data, "choices", None):
-                try:
-                    out = resp.data.choices[0].message.content[0].text
-                except Exception:
-                    pass
+            out = _extract_text_from_oci_response(resp.data)
             if out:
+                logger.info("OCI GenAI chat() response extracted (chars=%d)", len(out))
                 return out
+            logger.warning("OCI GenAI chat() returned no output; data fields=%s", dir(resp.data))
         except Exception as e:
-            logger.debug("OCI chat() path not available: %s", e)
+            logger.debug("OCI chat() path not available or failed: %s", e)
 
         # Fallback to generate_text()
         try:
@@ -110,7 +164,11 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 temperature=temperature,
             )
             resp = client.generate_text(details)
-            out = getattr(resp.data, "output_text", None)
+            out = _extract_text_from_oci_response(resp.data)
+            if out:
+                logger.info("OCI GenAI generate_text() response extracted (chars=%d)", len(out))
+            else:
+                logger.warning("OCI GenAI generate_text() returned no output; data fields=%s", dir(resp.data))
             return out
         except Exception as e:
             logger.debug("OCI generate_text() path failed: %s", e)
