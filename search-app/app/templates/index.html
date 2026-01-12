@@ -244,82 +244,131 @@
     });
 
     document.getElementById('uploadBtn').addEventListener('click', async () => {
-      const input = document.getElementById('files');
+      const filesInput = document.getElementById('files');
+      const folderInput = document.getElementById('folder');
       const status = document.getElementById('uploadStatus');
       const loading = document.getElementById('uploadLoading');
       const list = document.getElementById('uploadList');
       status.textContent = '';
-      const files = input.files;
-      if (!files || !files.length) { showToast('No files selected'); return; }
 
-      // Initialize per-file progress UI (if container exists)
-      let items = [];
-      if (list) {
-        list.innerHTML = '';
-        list.hidden = false;
-        items = [];
-        for (const f of files) {
-          const item = document.createElement('div');
-          item.className = 'progress-item';
-          item.innerHTML = `
-            <div class="progress-row"><span>${escapeHtml(f.name)}</span><span class="pct">0%</span></div>
-            <div class="progress"><div class="progress-bar"></div></div>
-          `;
-          list.appendChild(item);
-          items.push(item);
-        }
+      const selA = filesInput?.files ? Array.from(filesInput.files) : [];
+      const selB = folderInput?.files ? Array.from(folderInput.files) : [];
+      const allFiles = [...selA, ...selB];
+      if (!allFiles.length) { showToast('No files selected'); return; }
+
+      // Build UI entries
+      list.innerHTML = '';
+      list.hidden = false;
+      const entries = new Map();
+      for (const f of allFiles) {
+        const item = document.createElement('div');
+        item.className = 'progress-item';
+        item.innerHTML = `
+          <div class="progress-row"><span>${escapeHtml(f.webkitRelativePath || f.name)}</span><span class="pct">0%</span></div>
+          <div class="progress"><div class="progress-bar"></div></div>
+        `;
+        list.appendChild(item);
+        entries.set(f, item);
       }
 
       loading.hidden = false;
 
-      // Use raw XHR to capture upload progress events
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/upload');
+      const maxRetries = 3;
+      const backoff = (attempt) => Math.min(2000, 300 * Math.pow(2, attempt - 1));
 
-      const form = new FormData();
-      for (const f of files) form.append('files', f);
+      function uploadOne(file, attempt = 1) {
+        return new Promise((resolve) => {
+          const item = entries.get(file);
+          const bar = item.querySelector('.progress-bar');
+          const pctLabel = item.querySelector('.pct');
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/upload');
 
-      let total = 0; let loaded = 0;
-      for (const f of files) total += f.size;
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              bar.style.width = pct + '%';
+              pctLabel.textContent = pct + '%';
+            }
+          };
 
-      xhr.upload.onprogress = function (e) {
-        if (!e.lengthComputable) return;
-        const pctTotal = Math.round((e.loaded / e.total) * 100);
-        if (items && items.length) {
-          const last = items[items.length - 1];
-          if (last) last.querySelector('.pct').textContent = pctTotal + '%';
-          for (const it of items) {
-            const bar = it.querySelector('.progress-bar');
-            bar.style.width = pctTotal + '%';
-          }
+          xhr.onerror = () => {
+            if (attempt < maxRetries) {
+              const delay = backoff(attempt);
+              pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+              setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
+            } else {
+              pctLabel.textContent = 'failed';
+              resolve({ file, ok: false, error: 'network error' });
+            }
+          };
+
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  const data = JSON.parse(xhr.responseText);
+                  bar.style.width = '100%';
+                  pctLabel.textContent = '100%';
+                  resolve({ file, ok: true, data });
+                } catch (e) {
+                  if (attempt < maxRetries) {
+                    const delay = backoff(attempt);
+                    pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+                    setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
+                  } else {
+                    pctLabel.textContent = 'failed';
+                    resolve({ file, ok: false, error: 'parse error' });
+                  }
+                }
+              } else if (xhr.status >= 500 && attempt < maxRetries) {
+                const delay = backoff(attempt);
+                pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+                setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
+              } else {
+                pctLabel.textContent = 'failed';
+                resolve({ file, ok: false, error: xhr.responseText || `HTTP ${xhr.status}` });
+              }
+            }
+          };
+
+          const form = new FormData();
+          form.append('files', file);
+          xhr.send(form);
+        });
+      }
+
+      // Limit concurrency to 4
+      const queue = [...allFiles];
+      const inFlight = new Set();
+      const results = [];
+
+      async function pump() {
+        while (inFlight.size < 4 && queue.length) {
+          const f = queue.shift();
+          const p = uploadOne(f).then((res) => {
+            inFlight.delete(p);
+            results.push(res);
+            pump();
+          });
+          inFlight.add(p);
         }
-      };
-
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState === XMLHttpRequest.DONE) {
+        if (!queue.length && !inFlight.size) {
           loading.hidden = true;
           try {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const data = JSON.parse(xhr.responseText);
-              status.textContent = JSON.stringify(data, null, 2);
-              showToast('Upload complete');
-              // Ensure bars reach 100%
-              for (const it of items) {
-                it.querySelector('.progress-bar').style.width = '100%';
-                it.querySelector('.pct').textContent = '100%';
-              }
-            } else {
-              status.textContent = 'Error: ' + xhr.responseText;
-              showToast('Upload failed');
-            }
-          } catch (err) {
-            status.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown');
-            showToast('Upload failed');
+            status.textContent = JSON.stringify(results.map(r => ({
+              file: r.file.webkitRelativePath || r.file.name,
+              ok: r.ok,
+              error: r.error || null
+            })), null, 2);
+            showToast('Upload finished');
+          } catch (e) {
+            status.textContent = 'Upload finished (see progress list)';
           }
         }
-      };
+      }
 
-      xhr.send(form);
+      pump();
     });
 
     document.getElementById('readyBtn').addEventListener('click', async () => {

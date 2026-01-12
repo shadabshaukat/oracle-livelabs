@@ -4,6 +4,8 @@ import os
 import re
 from dataclasses import dataclass
 from typing import List, Tuple
+import csv
+import json
 
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
@@ -25,7 +27,7 @@ class ChunkParams:
 def read_text_from_file(path: str) -> Tuple[str, str]:
     """
     Return (text, source_type) from a supported file.
-    source_type: pdf|html|txt|docx
+    source_type: pdf|html|txt|docx|xml|csv|md|json
     """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
@@ -36,7 +38,19 @@ def read_text_from_file(path: str) -> Tuple[str, str]:
         return extract_text_from_docx(path), "docx"
     if ext in {".txt", ""}:
         return extract_text_from_txt(path), "txt"
-    raise ValueError(f"Unsupported file type: {ext}")
+    if ext == ".xml":
+        return extract_text_from_xml(path), "xml"
+    if ext == ".csv":
+        return extract_text_from_csv(path), "csv"
+    if ext == ".md":
+        return extract_text_from_md(path), "md"
+    if ext == ".json":
+        return extract_text_from_json(path), "json"
+    # Fallback: read as text if possible
+    try:
+        return extract_text_from_txt(path), ext.lstrip('.') or 'txt'
+    except Exception:
+        raise ValueError(f"Unsupported file type: {ext}")
 
 
 def extract_text_from_pdf(path: str) -> str:
@@ -67,9 +81,54 @@ def extract_text_from_html(path: str) -> str:
     return soup.get_text(separator=" ", strip=True)
 
 
+def extract_text_from_xml(path: str) -> str:
+    with open(path, "rb") as f:
+        data = f.read()
+    soup = BeautifulSoup(data, "xml")
+    return soup.get_text(separator=" ", strip=True)
+
+
 def extract_text_from_txt(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         return f.read()
+
+
+def extract_text_from_csv(path: str) -> str:
+    parts: List[str] = []
+    with open(path, newline="", encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            parts.append(" \t ".join(cell.strip() for cell in row if cell))
+    return "\n".join(parts)
+
+
+def extract_text_from_md(path: str) -> str:
+    # Light-weight: treat as plain text (could add markdown parsing if needed)
+    return extract_text_from_txt(path)
+
+
+def extract_text_from_json(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+        # Convert JSON to a flat text string
+        def _flatten(obj) -> List[str]:
+            out: List[str] = []
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    out.append(str(k))
+                    out.extend(_flatten(v))
+            elif isinstance(obj, list):
+                for it in obj:
+                    out.extend(_flatten(it))
+            else:
+                out.append(str(obj))
+            return out
+        parts = _flatten(data)
+        return "\n".join(s.strip() for s in parts if s and isinstance(s, str))
+    except Exception:
+        # Fall back to raw text if not valid JSON
+        return extract_text_from_txt(path)
 
 
 def extract_text_from_docx(path: str) -> str:

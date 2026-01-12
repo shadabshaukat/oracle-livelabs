@@ -38,6 +38,8 @@ class Settings:
     # Upload & parsing
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
     use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)
+    # Upload lifecycle
+    delete_uploaded_after_ingest: bool = _get_bool("DELETE_UPLOADED_FILES", False)
 
     # Database (OCI PostgreSQL)
     database_url: Optional[str] = os.getenv("DATABASE_URL")

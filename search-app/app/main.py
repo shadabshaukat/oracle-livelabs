@@ -102,13 +102,28 @@ async def upload(files: List[UploadFile] = File(...)):
         # Use filename (without extension) as title and include original filename in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
-        ing = ingest_file_path(path, title=title_no_ext, metadata={"filename": title})
-        results.append({
-            "filename": title,
-            "title": title_no_ext,
-            "document_id": ing.document_id,
-            "chunks": ing.num_chunks,
-        })
+        try:
+            ing = ingest_file_path(path, title=title_no_ext, metadata={"filename": title})
+            results.append({
+                "filename": title,
+                "title": title_no_ext,
+                "document_id": ing.document_id,
+                "chunks": ing.num_chunks,
+                "status": "ok",
+            })
+        except Exception as e:
+            results.append({
+                "filename": title,
+                "title": title_no_ext,
+                "error": str(e),
+                "status": "error",
+            })
+        finally:
+            if settings.delete_uploaded_after_ingest:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
     return {"results": results}
 
 
