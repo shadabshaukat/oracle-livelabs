@@ -11,7 +11,19 @@ from .text_utils import ChunkParams
 def build_ui():
     ensure_dirs()
 
-    with gr.Blocks(title="Enterprise Search App") as demo:
+    # Minimal, Oracle Redwood-inspired styling via custom CSS + a soft theme
+    css = """
+    .gradio-container { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: #f8f9fb; }
+    .gradio-container .prose h1, .gradio-container .prose h2, .gradio-container .prose h3 { color: #1f2937; }
+    .gradio-container .prose p { color: #374151; }
+    .gr-button { border-radius: 8px; }
+    .gr-button.primary { background-color: #2f6db5; border-color: #2f6db5; color: white; }
+    .gr-button:hover { filter: brightness(0.95); }
+    .gr-input label, .gr-textbox label, .gr-dropdown label, .gr-number label, .gr-slider label { font-weight: 600; color: #1f2937; }
+    .gr-box { border-radius: 10px; }
+    """
+
+    with gr.Blocks(title="Enterprise Search App", theme=gr.themes.Soft(), css=css) as demo:
         gr.Markdown("# Enterprise Search App\nUpload and search your documents (PDF, HTML, TXT, DOCX). Backed by OCI PostgreSQL + pgvector.")
 
         with gr.Tab("Upload"):
