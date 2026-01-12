@@ -99,8 +99,16 @@ async def upload(files: List[UploadFile] = File(...)):
     for f in files:
         data = await f.read()
         path = save_upload(data, f.filename)
-        ing = ingest_file_path(path)
-        results.append({"filename": f.filename, "document_id": ing.document_id, "chunks": ing.num_chunks})
+        # Use filename (without extension) as title and include original filename in metadata
+        title = Path(f.filename).name
+        title_no_ext = Path(title).stem
+        ing = ingest_file_path(path, title=title_no_ext, metadata={"filename": title})
+        results.append({
+            "filename": title,
+            "title": title_no_ext,
+            "document_id": ing.document_id,
+            "chunks": ing.num_chunks,
+        })
     return {"results": results}
 
 

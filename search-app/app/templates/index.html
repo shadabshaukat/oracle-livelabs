@@ -24,7 +24,7 @@
       </div>
 
       <div class="searchbar">
-        <input id="query" class="search-input" type="text" placeholder="Search..." />
+        <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" />
         <div class="search-actions">
           <button id="searchBtn" class="primary">Search</button>
           <button id="settingsBtn" class="ghost" title="Settings" aria-expanded="false">⚙️</button>
@@ -106,6 +106,15 @@
   <div id="toast" class="toast" hidden></div>
 
   <script>
+    // Clear inputs on load/refresh
+    window.addEventListener('DOMContentLoaded', () => {
+      const q = document.getElementById('query');
+      const files = document.getElementById('files');
+      const status = document.getElementById('uploadStatus');
+      if (q) q.value = '';
+      if (files) files.value = '';
+      if (status) status.textContent = '';
+    });
     function showToast(msg) {
       const t = document.getElementById('toast');
       t.textContent = msg;
