@@ -230,22 +230,77 @@
       const input = document.getElementById('files');
       const status = document.getElementById('uploadStatus');
       const loading = document.getElementById('uploadLoading');
+      const list = document.getElementById('uploadList');
       status.textContent = '';
       const files = input.files;
       if (!files || !files.length) { showToast('No files selected'); return; }
+
+      // Initialize per-file progress UI
+      list.innerHTML = '';
+      list.hidden = false;
+      const items = [];
+      for (const f of files) {
+        const item = document.createElement('div');
+        item.className = 'progress-item';
+        item.innerHTML = `
+          <div class="progress-row"><span>${escapeHtml(f.name)}</span><span class="pct">0%</span></div>
+          <div class="progress"><div class="progress-bar"></div></div>
+        `;
+        list.appendChild(item);
+        items.push(item);
+      }
+
+      loading.hidden = false;
+
+      // Use raw XHR to capture upload progress events
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+
       const form = new FormData();
       for (const f of files) form.append('files', f);
-      loading.hidden = false;
-      try {
-        const data = await api('/api/upload', { method: 'POST', body: form });
-        status.textContent = JSON.stringify(data, null, 2);
-        showToast('Upload complete');
-      } catch (e) {
-        status.textContent = 'Error: ' + e.message;
-        showToast('Upload failed');
-      } finally {
-        loading.hidden = true;
-      }
+
+      let total = 0; let loaded = 0;
+      for (const f of files) total += f.size;
+
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        loaded = e.loaded;
+        const pctTotal = Math.round((loaded / total) * 100);
+        // Update overall label on the last item
+        const last = items[items.length - 1];
+        if (last) last.querySelector('.pct').textContent = pctTotal + '%';
+        // Update bars proportionally (best-effort without per-file granularity)
+        for (const it of items) {
+          const bar = it.querySelector('.progress-bar');
+          bar.style.width = pctTotal + '%';
+        }
+      };
+
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState === XMLHttpRequest.DONE) {
+          loading.hidden = true;
+          try {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const data = JSON.parse(xhr.responseText);
+              status.textContent = JSON.stringify(data, null, 2);
+              showToast('Upload complete');
+              // Ensure bars reach 100%
+              for (const it of items) {
+                it.querySelector('.progress-bar').style.width = '100%';
+                it.querySelector('.pct').textContent = '100%';
+              }
+            } else {
+              status.textContent = 'Error: ' + xhr.responseText;
+              showToast('Upload failed');
+            }
+          } catch (err) {
+            status.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown');
+            showToast('Upload failed');
+          }
+        }
+      };
+
+      xhr.send(form);
     });
 
     document.getElementById('readyBtn').addEventListener('click', async () => {
