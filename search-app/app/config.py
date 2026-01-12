@@ -1,6 +1,20 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
+
+# Load environment variables from a .env file if present so `uv run searchapp` works without exporting vars
+try:
+    from dotenv import load_dotenv, find_dotenv  # type: ignore
+
+    _DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+    if _DOTENV_PATH.exists():
+        load_dotenv(str(_DOTENV_PATH), override=False)
+    else:
+        load_dotenv(find_dotenv(), override=False)
+except Exception:
+    # dotenv is optional; environment can still be provided by the shell or process manager
+    pass
 
 
 def _get_bool(env: str, default: bool = False) -> bool:
@@ -20,6 +34,9 @@ class Settings:
     # Storage
     data_dir: str = os.getenv("DATA_DIR", "storage")
     upload_dir: str = os.getenv("UPLOAD_DIR", "storage/uploads")
+    # Upload & parsing
+    max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
+    use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)
 
     # Database (OCI PostgreSQL)
     database_url: Optional[str] = os.getenv("DATABASE_URL")

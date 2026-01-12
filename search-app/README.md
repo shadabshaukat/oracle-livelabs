@@ -129,3 +129,37 @@ Group=searchapp
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Troubleshooting
+
+- Database configuration missing at startup:
+  - Ensure a .env file exists at search-app/.env (same folder as pyproject.toml) and contains either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.
+  - The app now auto-loads .env on startup via python-dotenv. No need to export variables manually when using `uv run searchapp`.
+  - If you prefer shell environment variables, ensure they are exported in the same shell that runs the app.
+
+- Embedding dimension mismatch errors during ingestion (e.g., 384 vs 768):
+  - EMBEDDING_DIM must match the chosen EMBEDDING_MODEL. For the default `sentence-transformers/all-MiniLM-L6-v2`, set EMBEDDING_DIM=384.
+  - If you previously created the schema with the wrong dimension, you can fix it by recreating or altering the column and index:
+    ```sql
+    -- Option A: Drop and recreate for a clean slate (will remove data)
+    DROP INDEX IF EXISTS idx_chunks_embedding_ivfflat;
+    ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(384) USING embedding;
+    CREATE INDEX idx_chunks_embedding_ivfflat ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 1000);
+    -- Ensure documents/chunks tables, extensions, and other indexes exist (app’s startup ensures IF NOT EXISTS)
+    ```
+  - Alternatively, start fresh by dropping tables if you’re not preserving data:
+    ```sql
+    DROP TABLE IF EXISTS chunks CASCADE;
+    DROP TABLE IF EXISTS documents CASCADE;
+    ```
+    Then restart the app to have it recreate the schema.
+
+- Connectivity/SSL issues to PostgreSQL:
+  - Default is `DB_SSLMODE=require`. Adjust `DB_SSLMODE` if your environment needs `verify-ca` or `disable` (not recommended for production).
+  - Verify networking/firewalls allow connections from the app host to the DB host/port.
+
+- Basic Auth credentials:
+  - All API and UI endpoints are protected. Set BASIC_AUTH_USER and BASIC_AUTH_PASSWORD in .env.
+
+- PDF extraction quality:
+  - Set `USE_PYMUPDF=true` to prefer PyMuPDF if installed (also enable the optional `pdf` dependency group).

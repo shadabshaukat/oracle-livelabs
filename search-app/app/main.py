@@ -22,7 +22,8 @@ logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 
 
 app = FastAPI(title="Enterprise Search App", version="0.1.0")
-app.add_middleware(BasicAuthMiddleware, protect_paths=("/api", "/ui"))
+# Protect API, UI, and docs as described in README (defaults in middleware already include docs)
+app.add_middleware(BasicAuthMiddleware)
 
 if settings.allow_cors:
     app.add_middleware(
