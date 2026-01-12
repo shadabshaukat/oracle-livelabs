@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import gradio as gr
 from typing import List
 
@@ -79,8 +80,8 @@ def build_ui():
 
         with gr.Tab("Status"):
             refresh = gr.Button("Refresh")
-            status_box = gr.JSON(label="Status")
-            counts = gr.JSON(label="Counts")
+            status_box = gr.Textbox(label="Status (JSON)", lines=6)
+            counts = gr.Dataframe(headers=["metric", "value"], datatype=["str", "number"])
 
             def do_status():
                 try:
@@ -92,9 +93,9 @@ def build_ui():
                             docs = int(cur.fetchone()[0])
                             cur.execute("SELECT count(*) FROM chunks")
                             ch = int(cur.fetchone()[0])
-                    return {"ready": ext_ok}, {"documents": docs, "chunks": ch}
+                    return json.dumps({"ready": ext_ok}, indent=2), [["documents", docs], ["chunks", ch]]
                 except Exception as e:
-                    return {"ready": False, "error": str(e)}, {}
+                    return json.dumps({"ready": False, "error": str(e)}, indent=2), [["documents", 0], ["chunks", 0]]
 
             refresh.click(do_status, inputs=[], outputs=[status_box, counts])
 
