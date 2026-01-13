@@ -89,7 +89,7 @@
         <div id="dropzone" class="dropzone">Drag & drop files here</div>
       </div>
       <div class="row">
-        <input id="files" type="file" multiple />
+        <input id="files" type="file" multiple webkitdirectory directory />
       </div>
       <div class="row" id="uploadListRow" hidden>
         <div id="uploadList" class="progress-list"></div>
@@ -136,7 +136,7 @@
         .replace(/&/g, '&')
         .replace(/</g, '<')
         .replace(/>/g, '>')
-        .replace(/"/g, '"')
+        .replace(/\"/g, '"')
         .replace(/'/g, '&#039;');
     }
 
@@ -373,18 +373,21 @@
       });
     }
 
-    document.getElementById('readyBtn').addEventListener('click', async () => {
-      const box = document.getElementById('readyJson');
-      const row = document.getElementById('statusRow');
-      try {
-        const data = await api('/api/ready');
-        box.textContent = JSON.stringify(data, null, 2);
-        row.hidden = false;
-      } catch (e) {
-        box.textContent = 'Error: ' + e.message;
-        row.hidden = false;
-      }
-    });
+    const readyBtn = document.getElementById('readyBtn');
+    if (readyBtn) {
+      readyBtn.addEventListener('click', async () => {
+        const box = document.getElementById('readyJson');
+        const row = document.getElementById('statusRow');
+        try {
+          const data = await api('/api/ready');
+          if (box) box.textContent = JSON.stringify(data, null, 2);
+          if (row) row.hidden = false;
+        } catch (e) {
+          if (box) box.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+          if (row) row.hidden = false;
+        }
+      });
+    }
 
     // Per-file upload with retries + concurrency + folder/files + dropped files
     document.getElementById('uploadBtn').addEventListener('click', async () => {
