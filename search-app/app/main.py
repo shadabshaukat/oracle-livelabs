@@ -197,6 +197,8 @@ async def llm_test(payload: Dict[str, Any] | None = None):
     provider = settings.llm_provider
     answer: str | None = None
     error: str | None = None
+    chat_ok: bool = False
+    text_ok: bool = False
     try:
         if provider == "openai" and settings.openai_api_key:
             try:
@@ -217,8 +219,17 @@ async def llm_test(payload: Dict[str, Any] | None = None):
                 error = str(e)
         elif provider == "oci":
             try:
-                from .oci_llm import oci_chat_completion
-                answer = oci_chat_completion(q, ctx)
+                from .oci_llm import (
+                    oci_chat_completion,
+                    oci_chat_completion_chat_only,
+                    oci_chat_completion_text_only,
+                )
+                # Probe both paths for diagnostics
+                ans_chat = oci_chat_completion_chat_only(q, ctx)
+                ans_text = oci_chat_completion_text_only(q, ctx)
+                chat_ok = bool(ans_chat)
+                text_ok = bool(ans_text)
+                answer = ans_chat or ans_text or oci_chat_completion(q, ctx)
             except Exception as e:
                 error = str(e)
         else:
@@ -233,6 +244,8 @@ async def llm_test(payload: Dict[str, Any] | None = None):
         "question": q,
         "context_chars": len(ctx or ""),
         "error": error,
+        "chat_ok": chat_ok,
+        "text_ok": text_ok,
     }
 
 

@@ -73,46 +73,90 @@ def _safe_build(model_cls, **kwargs):
 
 
 def _extract_text_from_oci_response(data) -> Optional[str]:
-    """Attempt to extract text from various possible OCI GenAI response shapes."""
+    """Attempt to extract text from a wide variety of OCI GenAI response shapes."""
     try:
-        # Common fields
-        out = getattr(data, "output_text", None)
-        if out:
-            return out
-        out = getattr(data, "generated_text", None)
-        if out:
-            return out
+        if data is None:
+            return None
+
+        # Direct strings
+        if isinstance(data, str) and data.strip():
+            return data
+
+        # Known single-string fields
+        for attr in ("output_text", "generated_text", "text", "result", "output"):
+            out = getattr(data, attr, None)
+            if isinstance(out, str) and out.strip():
+                return out
+
+        # Known list-of-strings fields
+        for attr in ("output_texts", "generated_texts", "outputs"):
+            arr = getattr(data, attr, None)
+            if isinstance(arr, (list, tuple)) and arr:
+                # first non-empty string
+                for v in arr:
+                    if isinstance(v, str) and v.strip():
+                        return v
 
         # Chat-style choices
         choices = getattr(data, "choices", None)
-        if choices:
+        if isinstance(choices, (list, tuple)) and choices:
+            # choices[0].message.content[0].text
             try:
-                # Chat format: choices[0].message.content[0].text
-                msg = choices[0].message
+                msg = getattr(choices[0], "message", None)
                 content = getattr(msg, "content", None)
-                if content and len(content) and hasattr(content[0], "text"):
-                    return content[0].text
+                if isinstance(content, (list, tuple)) and content:
+                    first = content[0]
+                    txt = getattr(first, "text", None)
+                    if isinstance(txt, str) and txt.strip():
+                        return txt
             except Exception:
                 pass
+            # choices[0].text
             try:
-                # Text format: choices[0].text
                 txt = getattr(choices[0], "text", None)
-                if txt:
+                if isinstance(txt, str) and txt.strip():
                     return txt
             except Exception:
                 pass
 
-        # Content array with text
+        # Content arrays
         content = getattr(data, "content", None)
-        if content and len(content):
+        if isinstance(content, (list, tuple)) and content:
             try:
-                if hasattr(content[0], "text"):
-                    return content[0].text
+                first = content[0]
+                txt = getattr(first, "text", None)
+                if isinstance(txt, str) and txt.strip():
+                    return txt
             except Exception:
                 pass
+
+        # Dict-like objects (SDK models often have to_dict)
+        try:
+            to_dict = getattr(data, "to_dict", None)
+            obj = to_dict() if callable(to_dict) else None
+            if isinstance(obj, dict) and obj:
+                # try common keys
+                for key in ("output_text", "generated_text", "text", "result", "output"):
+                    v = obj.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return v
+                for key in ("output_texts", "generated_texts", "outputs", "choices", "content"):
+                    v = obj.get(key)
+                    # list of strings
+                    if isinstance(v, (list, tuple)):
+                        for it in v:
+                            if isinstance(it, str) and it.strip():
+                                return it
+                            if isinstance(it, dict):
+                                t = it.get("text")
+                                if isinstance(t, str) and t.strip():
+                                    return t
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("Failed to extract OCI response text: %s", e)
     return None
+
 
 
 def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
@@ -148,7 +192,10 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             if out:
                 logger.info("OCI GenAI chat() response extracted (chars=%d)", len(out))
                 return out
-            logger.warning("OCI GenAI chat() returned no output; data fields=%s", dir(resp.data))
+            try:
+                logger.warning("OCI GenAI chat(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
+            except Exception:
+                logger.warning("OCI GenAI chat(): no text extracted; unable to introspect resp.data")
         except Exception as e:
             logger.debug("OCI chat() path not available or failed: %s", e)
 
@@ -167,12 +214,73 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             out = _extract_text_from_oci_response(resp.data)
             if out:
                 logger.info("OCI GenAI generate_text() response extracted (chars=%d)", len(out))
-            else:
-                logger.warning("OCI GenAI generate_text() returned no output; data fields=%s", dir(resp.data))
-            return out
+                return out
+            try:
+                logger.warning("OCI GenAI generate_text(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
+            except Exception:
+                logger.warning("OCI GenAI generate_text(): no text extracted; unable to introspect resp.data")
+            return None
         except Exception as e:
             logger.debug("OCI generate_text() path failed: %s", e)
             return None
     except Exception as e:
         logger.exception("OCI GenAI call failed: %s", e)
+        return None
+
+
+def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
+    """Force the chat() path and return extracted text or None."""
+    client, _ = _build_oci_clients()
+    if client is None or settings.llm_provider != "oci":
+        return None
+    try:
+        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
+        comp_id = settings.oci_compartment_id
+        model_id = settings.oci_genai_model_id
+        if not comp_id or not model_id:
+            return None
+        prompt = (
+            "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
+            f"Question: {question}\n\nContext:\n{context[:12000]}"
+        )
+        details = _safe_build(
+            ChatDetails,
+            compartment_id=comp_id,
+            model_id=model_id,
+            messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        resp = client.chat(details)
+        return _extract_text_from_oci_response(resp.data)
+    except Exception:
+        return None
+
+
+def oci_chat_completion_text_only(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
+    """Force the generate_text() path and return extracted text or None."""
+    client, _ = _build_oci_clients()
+    if client is None or settings.llm_provider != "oci":
+        return None
+    try:
+        from oci.generative_ai_inference.models import GenerateTextDetails
+        comp_id = settings.oci_compartment_id
+        model_id = settings.oci_genai_model_id
+        if not comp_id or not model_id:
+            return None
+        prompt = (
+            "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
+            f"Question: {question}\n\nContext:\n{context[:12000]}"
+        )
+        details = _safe_build(
+            GenerateTextDetails,
+            compartment_id=comp_id,
+            model_id=model_id,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        resp = client.generate_text(details)
+        return _extract_text_from_oci_response(resp.data)
+    except Exception:
         return None
