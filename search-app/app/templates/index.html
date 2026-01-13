@@ -67,6 +67,7 @@
       <div class="row" id="answerRow" hidden>
         <label>Answer / Context <span id="llmBadge" class="badge" style="display:none"></span></label>
         <pre id="answer" class="panel"></pre>
+        <div id="refs" class="panel" style="margin-top:8px; display:none"></div>
       </div>
       <div class="row" id="resultsRow" hidden>
         <label>Results</label>
@@ -236,6 +237,24 @@
             } else {
               badge.textContent = 'Context-only';
               badge.style.display = 'inline-block';
+            }
+          }
+          // Render references if provided
+          const refsEl = document.getElementById('refs');
+          if (refsEl) {
+            if (Array.isArray(data.references) && data.references.length) {
+              refsEl.style.display = 'block';
+              const items = data.references.map(r => {
+                const fn = r.file_name || '';
+                const ft = r.file_type || '';
+                const href = r.href || '';
+                const cid = r.chunk_id != null ? `chunk #${r.chunk_id}` : '';
+                return `<div>• ${fn}${ft ? ` (${ft})` : ''} ${href ? `<a href="${href}">${cid}</a>` : cid}</div>`;
+              }).join('');
+              refsEl.innerHTML = `<strong>References</strong>\n${items}`;
+            } else {
+              refsEl.style.display = 'none';
+              refsEl.innerHTML = '';
             }
           }
         }

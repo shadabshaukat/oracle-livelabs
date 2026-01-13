@@ -41,6 +41,10 @@ class Settings:
     # Upload lifecycle
     delete_uploaded_after_ingest: bool = _get_bool("DELETE_UPLOADED_FILES", False)
 
+    # Chunking
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "2500"))
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "250"))
+
     # Database (OCI PostgreSQL)
     database_url: Optional[str] = os.getenv("DATABASE_URL")
     db_host: Optional[str] = os.getenv("DB_HOST")

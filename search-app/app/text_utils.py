@@ -18,8 +18,8 @@ SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 @dataclass
 class ChunkParams:
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = 2500
+    chunk_overlap: int = 250
     # Optional custom separator order for recursive splitting
     separators: tuple[str, ...] = ("\n\n", "\n", ". ", " ", "")
 

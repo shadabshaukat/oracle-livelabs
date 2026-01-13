@@ -68,9 +68,11 @@ def insert_chunks(conn: psycopg.Connection, document_id: int, chunks: Sequence[s
     return len(rows)
 
 
-def ingest_file_path(file_path: str, title: Optional[str] = None, metadata: Optional[dict] = None, chunk_params: ChunkParams = ChunkParams()) -> IngestResult:
+def ingest_file_path(file_path: str, title: Optional[str] = None, metadata: Optional[dict] = None, chunk_params: Optional[ChunkParams] = None) -> IngestResult:
     text, source_type = read_text_from_file(file_path)
-    chunks = chunk_text(text, chunk_params)
+    # Use provided chunk params, else build from environment defaults
+    cp = chunk_params or ChunkParams(settings.chunk_size, settings.chunk_overlap)
+    chunks = chunk_text(text, cp)
     if not chunks:
         raise ValueError("No textual content extracted from file")
     embeddings = embed_texts(chunks)

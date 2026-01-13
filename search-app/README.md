@@ -72,7 +72,89 @@ Environment variables (see .env.example):
 - FTS_CONFIG (default english)
 - RAG LLM provider:
   - OpenAI: set LLM_PROVIDER=openai and OPENAI_API_KEY
-  - OCI GenAI: set LLM_PROVIDER=oci and configure OCI_REGION, OCI_COMPARTMENT_OCID, OCI_GENAI_ENDPOINT, OCI_GENAI_MODEL_ID plus either OCI_CONFIG_FILE/PROFILE or API key envs (TENANCY/USER/FINGERPRINT/PRIVATE_KEY_PATH)
+  - OCI GenAI (preferred for this app): set LLM_PROVIDER=oci and configure:
+    - OCI_REGION (e.g., us-chicago-1)
+    - OCI_GENAI_ENDPOINT (e.g., https://inference.generativeai.us-chicago-1.oci.oraclecloud.com)
+    - OCI_COMPARTMENT_OCID
+    - OCI_GENAI_MODEL_ID (chat-capable model in the chosen region)
+    - Auth via either:
+      - OCI_CONFIG_FILE + OCI_CONFIG_PROFILE (recommended), or
+      - API key envs: OCI_TENANCY_OCID, OCI_USER_OCID, OCI_FINGERPRINT, OCI_PRIVATE_KEY_PATH, OCI_REGION
+
+## Endpoints
+
+- GET /api/health
+- GET /api/ready (DB readiness: checks extensions, tables, and indexes)
+- POST /api/upload (multipart) files[]
+- POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k }
+- GET /api/llm-config (OCI LLM config snapshot – provider/region/endpoint; compartment/model presence)
+- POST /api/llm-test ({question, context}) – verifies LLM connectivity; returns ok + chat_ok/text_ok
+- GET/POST /api/llm-debug ({question, context}) – diagnostic shape/fields for OCI responses
+
+UI
+- Root at /. Includes: Search, Upload, Status tabs; RAG answer shows an “LLM answer” badge when the model is used.
+- RAG answers include a “References” list (file name, type, and a chunk anchor). Full source paths are not exposed.
+
+Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 if you’ve just updated templates.
+
+## RAG and OCI GenAI
+
+- This app uses the OCI Generative AI chat API with OnDemandServingMode(model_id=…). Requests include:
+  - ChatDetails(compartment_id, serving_mode)
+  - GenericChatRequest(api_format=GENERIC, messages=[SYSTEM, USER], max_tokens, temperature)
+- The SYSTEM prompt enforces: “Answer directly from the provided context. If insufficient, say ‘No answer found in the provided context.’ Do not ask for more input.”
+- The USER message contains both the question and context.
+- The app extracts text from multiple OCI response shapes, including ChatResult.chat_response.
+- A generate_text fallback is present but not required for models that prefer chat (generate_text may return 400 in those cases and is ignored).
+
+Example LLM test (with Basic Auth):
+
+```bash
+curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/llm-test \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Summarize Australia in one sentence","context":"Australia is a country and continent surrounded by the Indian and Pacific oceans."}'
+```
+
+Note: Avoid trailing characters after the JSON body (a trailing dot will cause 422 JSON decode error).
+
+## Search Mode Curl Examples
+
+All search endpoints require Basic Auth and a JSON body with "query" and optional "mode" (defaults to hybrid), "top_k" (defaults to 25).
+
+- Semantic:
+```bash
+curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"MySQL HeatWave loading tables","mode":"semantic","top_k":5}'
+```
+
+- Full-text:
+```bash
+curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"MySQL HeatWave loading tables","mode":"fulltext","top_k":5}'
+```
+
+- Hybrid:
+```bash
+curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"MySQL HeatWave loading tables","mode":"hybrid","top_k":5}'
+```
+
+- RAG:
+```bash
+curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"Tell me about MySQL HeatWave","mode":"rag","top_k":10}'
+```
+
+## Chunking strategy
+
+- Uses a recursive character splitter inspired by LangChain’s RecursiveCharacterTextSplitter with separators (\n\n, \n, ". ", " ", "").
+- Defaults: chunk_size=2500 and chunk_overlap=250 (tune in code or via the UI ingest parameters).
+- The order of separators ensures we prefer paragraph and sentence boundaries before falling back to word and character splits.
+- Supports PDF, HTML, TXT, and DOCX extraction. For PDFs, you can set USE_PYMUPDF=true to prefer higher-quality extraction.
 
 ## Scaling to 10M vectors
 
@@ -83,28 +165,6 @@ Environment variables (see .env.example):
 - Tune ivfflat.probes per query (PGVECTOR_PROBES); higher improves recall at more CPU.
 - Use batched ingestion; this app uses executemany to reduce round-trips. For massive imports, consider COPY.
 - Ensure adequate CPU/RAM, and enable autovacuum and regular ANALYZE on chunks.
-
-## Endpoints
-
-- GET /api/health
-- GET /api/ready (DB readiness: checks extensions, tables, and indexes)
-- POST /api/upload (multipart) files[]
-- POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k }
-
-Minimal UI is available at / (root) with Search, Upload and Status sections.
-
-## Security Notes
-
-- All API and UI routes are protected with HTTP Basic Auth via BASIC_AUTH_USER/PASSWORD (including /docs, /openapi.json, /redoc).
-- CORS is enabled by default; restrict ALLOW_CORS in production.
-- The upload endpoint writes files to storage/uploads; ensure filesystem quotas and scanning if needed.
-- Use SSL to your PostgreSQL (sslmode=require by default).
-
-## Chunking strategy
-
-- Uses a recursive character splitter inspired by LangChain's RecursiveCharacterTextSplitter with separators (\n\n, \n, ". ", " ", "").
-- Defaults: chunk_size=1000 and chunk_overlap=200 (adjust in code if needed).
-- Supports PDF, HTML, TXT, and DOCX extraction.
 
 ## Idempotent schema
 
@@ -132,34 +192,24 @@ WantedBy=multi-user.target
 
 ## Troubleshooting
 
+- 422 JSON decode error from curl commands:
+  - Ensure there are no trailing characters (e.g., trailing dot) after the JSON body.
+
+- LLM test ok=false or empty answer (OCI):
+  - Confirm .env has: LLM_PROVIDER=oci, region + endpoint + compartment + model ID.
+  - Verify OCI Generative AI is enabled for your tenancy/compartment in that region.
+  - Prefer chat path (generate_text may return 400 for chat-only models; that is expected and ignored).
+
 - Database configuration missing at startup:
-  - Ensure a .env file exists at search-app/.env (same folder as pyproject.toml) and contains either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.
-  - The app now auto-loads .env on startup via python-dotenv. No need to export variables manually when using `uv run searchapp`.
-  - If you prefer shell environment variables, ensure they are exported in the same shell that runs the app.
+  - Ensure search-app/.env contains either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.
+  - The app auto-loads .env on startup via python-dotenv.
 
 - Embedding dimension mismatch errors during ingestion (e.g., 384 vs 768):
-  - EMBEDDING_DIM must match the chosen EMBEDDING_MODEL. For the default `sentence-transformers/all-MiniLM-L6-v2`, set EMBEDDING_DIM=384.
-  - If you previously created the schema with the wrong dimension, you can fix it by recreating or altering the column and index:
-    ```sql
-    -- Option A: Drop and recreate for a clean slate (will remove data)
-    DROP INDEX IF EXISTS idx_chunks_embedding_ivfflat;
-    ALTER TABLE chunks ALTER COLUMN embedding TYPE vector(384) USING embedding;
-    CREATE INDEX idx_chunks_embedding_ivfflat ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 1000);
-    -- Ensure documents/chunks tables, extensions, and other indexes exist (app’s startup ensures IF NOT EXISTS)
-    ```
-  - Alternatively, start fresh by dropping tables if you’re not preserving data:
-    ```sql
-    DROP TABLE IF EXISTS chunks CASCADE;
-    DROP TABLE IF EXISTS documents CASCADE;
-    ```
-    Then restart the app to have it recreate the schema.
+  - EMBEDDING_DIM must match the chosen EMBEDDING_MODEL (MiniLM-L6-v2 -> 384).
+  - If you created the schema with the wrong dimension, recreate/alter the column + index, or drop tables and restart to rebuild schema.
 
 - Connectivity/SSL issues to PostgreSQL:
-  - Default is `DB_SSLMODE=require`. Adjust `DB_SSLMODE` if your environment needs `verify-ca` or `disable` (not recommended for production).
-  - Verify networking/firewalls allow connections from the app host to the DB host/port.
-
-- Basic Auth credentials:
-  - All API and UI endpoints are protected. Set BASIC_AUTH_USER and BASIC_AUTH_PASSWORD in .env.
+  - Default is DB_SSLMODE=require. Adjust as needed for your environment.
 
 - PDF extraction quality:
-  - Set `USE_PYMUPDF=true` to prefer PyMuPDF if installed (also enable the optional `pdf` dependency group).
+  - Set USE_PYMUPDF=true to prefer PyMuPDF if installed (also enable the optional `pdf` dependency group).

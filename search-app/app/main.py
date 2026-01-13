@@ -153,10 +153,13 @@ async def api_search(payload: Dict[str, Any]):
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, source_path, COALESCE(title, '') FROM documents WHERE id = ANY(%s)", (doc_ids,)
+                    "SELECT id, source_path, source_type, COALESCE(title, '') FROM documents WHERE id = ANY(%s)", (doc_ids,)
                 )
                 for row in cur.fetchall():
-                    doc_info[int(row[0])] = {"source_path": row[1], "title": row[2]}
+                    # row: id, source_path, source_type, title
+                    sp = row[1] or ""
+                    fn = sp.rsplit("/", 1)[-1] if sp else ""
+                    doc_info[int(row[0])] = {"source_path": sp, "file_name": fn, "file_type": row[2] or "", "title": row[3]}
 
     hits_out = []
     for h in hits:
@@ -170,13 +173,26 @@ async def api_search(payload: Dict[str, Any]):
         }
         meta = doc_info.get(h.document_id)
         if meta:
-            entry.update(meta)
+            # Do not expose full source_path to UI; include file_name and file_type
+            entry["file_name"] = meta.get("file_name", "")
+            entry["file_type"] = meta.get("file_type", "")
+            entry["title"] = meta.get("title", "")
         hits_out.append(entry)
 
     out: Dict[str, Any] = {"mode": mode if mode in {"semantic", "fulltext", "rag"} else "hybrid", "hits": hits_out}
     if answer is not None:
         out["answer"] = answer
         out["used_llm"] = bool(used_llm)
+        # Include top references for UI (file name/type and chunk anchor)
+        refs = []
+        for e in hits_out[: min(len(hits_out), 5)]:
+            refs.append({
+                "file_name": e.get("file_name") or e.get("title") or "",
+                "file_type": e.get("file_type") or "",
+                "chunk_id": e.get("chunk_id"),
+                "href": f"#chunk-{e.get('chunk_id')}"
+            })
+        out["references"] = refs
     return out
 
 
