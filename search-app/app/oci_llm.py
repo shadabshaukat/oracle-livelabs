@@ -215,18 +215,26 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
 
         # Try chat() path first
         try:
-            from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
+            from oci.generative_ai_inference.models import (
+                ChatDetails, GenericChatRequest, Message, TextContent, OnDemandServingMode, BaseChatRequest
+            )
             sm = _safe_build(OnDemandServingMode, model_id=model_id)
             _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
+            # Build GenericChatRequest with message list
+            txt = _safe_build(TextContent, text=prompt)
+            msg = _safe_build(Message, role="USER", content=[txt])
+            chat_req = _safe_build(GenericChatRequest,
+                                   api_format=BaseChatRequest.API_FORMAT_GENERIC,
+                                   messages=[msg],
+                                   max_tokens=int(max_tokens),
+                                   temperature=float(temperature))
             details = _safe_build(
                 ChatDetails,
                 compartment_id=comp_id,
                 serving_mode=sm,
-                messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
-                max_tokens=max_tokens,
-                temperature=temperature,
+                chat_request=chat_req,
             )
-            _apply_aliases(details, {"compartment_id": comp_id, "compartmentId": comp_id, "servingMode": sm})
+            _apply_aliases(details, {"compartment_id": comp_id, "compartmentId": comp_id, "servingMode": sm, "chatRequest": chat_req})
             try:
                 dd = details.to_dict() if hasattr(details, "to_dict") else None
                 if dd:
@@ -361,7 +369,9 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
     if client is None or settings.llm_provider != "oci":
         return None
     try:
-        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
+        from oci.generative_ai_inference.models import (
+            ChatDetails, GenericChatRequest, Message, TextContent, OnDemandServingMode, BaseChatRequest
+        )
         comp_id = settings.oci_compartment_id
         model_id = settings.oci_genai_model_id
         if not comp_id or not model_id:
@@ -370,13 +380,20 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
             "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
             f"Question: {question}\n\nContext:\n{context[:12000]}"
         )
+        sm = _safe_build(OnDemandServingMode, model_id=model_id)
+        _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
+        txt = _safe_build(TextContent, text=prompt)
+        msg = _safe_build(Message, role="USER", content=[txt])
+        chat_req = _safe_build(GenericChatRequest,
+                               api_format=BaseChatRequest.API_FORMAT_GENERIC,
+                               messages=[msg],
+                               max_tokens=int(max_tokens),
+                               temperature=float(temperature))
         details = _safe_build(
             ChatDetails,
             compartment_id=comp_id,
-            serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
-            messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
-            max_tokens=max_tokens,
-            temperature=temperature,
+            serving_mode=sm,
+            chat_request=chat_req,
         )
         try:
             dd = details.to_dict() if hasattr(details, "to_dict") else None
