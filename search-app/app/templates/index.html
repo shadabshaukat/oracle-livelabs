@@ -15,8 +15,8 @@
 
   <main class="container">
     <!-- Hero: Google-like minimalist landing -->
-    <section class="card card--wide hero">
-      <div class="logo" aria-label="SEARCH">
+    <section class="card card--wide hero" style="max-width: 600px; margin: 0 auto;">
+      <div class="logo" aria-label="SEARCH" style="text-align: center;">
         <span class="g g-blue">S</span>
         <span class="g g-red">E</span>
         <span class="g g-yellow">A</span>
@@ -25,15 +25,15 @@
         <span class="g g-red">H</span>
       </div>
 
-      <div class="searchbar">
-        <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" />
+      <div class="searchbar" style="display: flex; justify-content: center; align-items: center; margin: 0 auto;">
+        <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" style="flex: 1;" />
         <div class="search-actions">
           <button id="searchBtn" class="primary">Search</button>
           <button id="settingsBtn" class="ghost" title="Settings" aria-expanded="false">⚙️</button>
         </div>
       </div>
 
-      <div class="row wrap middle" style="justify-content: center; margin: 8px 0;">
+      <div class="row wrap middle" style="justify-content: center; margin: 8px auto;">
         <label><input type="radio" name="mode" value="hybrid" checked> Hybrid</label>
         <label><input type="radio" name="mode" value="semantic"> Semantic</label>
         <label><input type="radio" name="mode" value="fulltext"> Full-text</label>
@@ -55,7 +55,7 @@
         </div>
       </div>
 
-      <div class="row middle">
+      <div class="row middle" style="justify-content: center;">
         <div class="loader" id="searchLoading" hidden>
           <div class="spinner"></div>
           <span>Searching…</span>
@@ -74,9 +74,9 @@
     </section>
 
     <!-- Upload -->
-    <section class="card card--wide">
-      <h2>Upload</h2>
-      <div class="row wrap">
+    <section class="card card--wide" style="max-width: 600px; margin: 0 auto;">
+      <h2 style="text-align: center;">Upload</h2>
+      <div class="row wrap" style="justify-content: center;">
         <button id="uploadBtn">Upload</button>
         <div class="loader" id="uploadLoading" hidden>
           <div class="spinner small"></div>
