@@ -244,12 +244,16 @@
           if (refsEl) {
             if (Array.isArray(data.references) && data.references.length) {
               refsEl.style.display = 'block';
-              const items = data.references.map(r => {
+              const items = data.references.map((r, idx) => {
                 const fn = r.file_name || '';
                 const ft = r.file_type || '';
-                const href = r.href || '';
-                const cid = r.chunk_id != null ? `chunk #${r.chunk_id}` : '';
-                return `<div>• ${fn}${ft ? ` (${ft})` : ''} ${href ? `<a href="${href}">${cid}</a>` : cid}</div>`;
+                // Find matching hit for chunk text (by chunk_id)
+                const match = data.hits.find(h => h.chunk_id === r.chunk_id);
+                const txt = match ? escapeHtml(match.content) : '';
+                return `<details>
+                  <summary>[${idx+1}] Source: ${fn}${ft ? ` (${ft})` : ''}</summary>
+                  <p>${txt}</p>
+                </details>`;
               }).join('');
               refsEl.innerHTML = `<strong>References</strong>\n${items}`;
             } else {
