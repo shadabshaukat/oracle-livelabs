@@ -167,6 +167,29 @@ def _extract_text_from_oci_response(data) -> Optional[str]:
             except Exception:
                 pass
 
+        # ChatResult wrapper (chat_response)
+        cr = getattr(data, "chat_response", None)
+        if cr:
+            try:
+                msg = getattr(cr, "message", None)
+                if msg:
+                    c = getattr(msg, "content", None)
+                    if isinstance(c, (list, tuple)) and c:
+                        t = getattr(c[0], "text", None)
+                        if isinstance(t, str) and t.strip():
+                            return t
+                choices = getattr(cr, "choices", None)
+                if isinstance(choices, (list, tuple)) and choices:
+                    msg = getattr(choices[0], "message", None)
+                    if msg:
+                        c = getattr(msg, "content", None)
+                        if isinstance(c, (list, tuple)) and c:
+                            t = getattr(c[0], "text", None)
+                            if isinstance(t, str) and t.strip():
+                                return t
+            except Exception:
+                pass
+
         # Dict-like objects (SDK models often have to_dict)
         try:
             to_dict = getattr(data, "to_dict", None)
