@@ -265,7 +265,8 @@ def oci_try_chat_debug(question: str, context: str, max_tokens: int = 512, tempe
         resp = client.chat(details)
         t, fields = _introspect_obj(resp.data)
         return _extract_text_from_oci_response(resp.data), t, fields
-    except Exception:
+    except Exception as e:
+        logger.exception("oci_try_chat_debug exception: %s", e)
         return None, "exception", []
 
 
@@ -294,7 +295,8 @@ def oci_try_text_debug(question: str, context: str, max_tokens: int = 512, tempe
         resp = client.generate_text(details)
         t, fields = _introspect_obj(resp.data)
         return _extract_text_from_oci_response(resp.data), t, fields
-    except Exception:
+    except Exception as e:
+        logger.exception("oci_try_text_debug exception: %s", e)
         return None, "exception", []
 
 
