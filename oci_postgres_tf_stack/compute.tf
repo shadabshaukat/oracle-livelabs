@@ -28,7 +28,7 @@ resource "oci_core_instance" "app_host" {
   create_vnic_details {
     # For stack-created network, compute is placed in the public subnet.
     assign_public_ip = var.compute_assign_public_ip
-    subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1-pub-subnet[0].id : (length(var.public_subnet_ocid) > 0 ? var.public_subnet_ocid : var.psql_subnet_ocid)
+    subnet_id        = var.create_vcn_subnet == true ? oci_core_subnet.vcn1_pub_subnet[0].id : (length(var.public_subnet_ocid) > 0 ? var.public_subnet_ocid : var.psql_subnet_ocid)
     nsg_ids          = var.compute_nsg_ids
   }
 
@@ -60,4 +60,3 @@ data "oci_core_vnic" "app_host_primary_vnic" {
   count   = var.create_compute == true ? 1 : 0
   vnic_id = data.oci_core_vnic_attachments.app_host_vnics[0].vnic_attachments[0].vnic_id
 }
-

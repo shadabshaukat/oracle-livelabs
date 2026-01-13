@@ -75,7 +75,7 @@ def build_ui():
                     rows = [[h.chunk_id, h.document_id, h.chunk_index, None, h.rank, h.content] for h in hits]
                     return "\n\n".join(h.content for h in hits), _rows_to_text(rows)
                 if m == "rag":
-                    ans, hits = rag(q, mode="hybrid", top_k=int(k))
+                    ans, hits, _used_llm = rag(q, mode="hybrid", top_k=int(k))
                     rows = [[h.chunk_id, h.document_id, h.chunk_index, h.distance, h.rank, h.content] for h in hits]
                     return ans, _rows_to_text(rows)
                 hits = rag(q, mode="hybrid", top_k=int(k))[1]

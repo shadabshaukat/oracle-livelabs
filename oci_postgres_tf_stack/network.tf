@@ -21,7 +21,7 @@ resource oci_core_vcn vcn1 {
 ###  PSQL Private Subnet
 #######################
 
-resource oci_core_subnet vcn1-psql-priv-subnet {
+resource oci_core_subnet vcn1_psql_priv_subnet {
   
   cidr_block     =  cidrsubnet(var.vcn_cidr[0],8,1)
   compartment_id = var.compartment_ocid
@@ -35,9 +35,9 @@ resource oci_core_subnet vcn1-psql-priv-subnet {
   ]
   prohibit_internet_ingress  = "true"
   prohibit_public_ip_on_vnic = "true"
-  route_table_id             = oci_core_route_table.VCN1-RT[0].id
+  route_table_id             = oci_core_route_table.VCN1_RT[0].id
   security_list_ids = [
-    oci_core_security_list.VCN1-PRIVATE-SL[0].id,
+    oci_core_security_list.VCN1_PRIVATE_SL[0].id,
   ]
   vcn_id = oci_core_vcn.vcn1[0].id
   count = var.create_vcn_subnet == true ? 1 : 0
@@ -76,7 +76,7 @@ resource "oci_core_service_gateway" "vcn1_sgway" {
 
 
 
-resource "oci_core_network_security_group" vcn1-nsg {
+resource "oci_core_network_security_group" vcn1_nsg {
   compartment_id = var.compartment_ocid
 
   display_name = "PSQLNSG"
@@ -88,8 +88,8 @@ resource "oci_core_network_security_group" vcn1-nsg {
 }
 
 
-resource "oci_core_network_security_group_security_rule" "vcn1-nsg_rule_0" {
-    network_security_group_id = oci_core_network_security_group.vcn1-nsg[0].id
+resource "oci_core_network_security_group_security_rule" "vcn1_nsg_rule_0" {
+    network_security_group_id = oci_core_network_security_group.vcn1_nsg[0].id
     direction = "INGRESS"
     protocol = "6" #TCP
 
@@ -106,8 +106,8 @@ resource "oci_core_network_security_group_security_rule" "vcn1-nsg_rule_0" {
   }
 
 }
-resource "oci_core_network_security_group_security_rule" "vcn1-nsg_rule_1" {
-    network_security_group_id = oci_core_network_security_group.vcn1-nsg[0].id
+resource "oci_core_network_security_group_security_rule" "vcn1_nsg_rule_1" {
+    network_security_group_id = oci_core_network_security_group.vcn1_nsg[0].id
     direction = "EGRESS"
     protocol = "6" #TCP
 
@@ -118,7 +118,7 @@ resource "oci_core_network_security_group_security_rule" "vcn1-nsg_rule_1" {
 
 }
 
-resource "oci_core_nat_gateway" vcn1-NGTWY {
+resource "oci_core_nat_gateway" vcn1_ngtwy {
   block_traffic  = "false"
   compartment_id = var.compartment_ocid
 
@@ -131,7 +131,7 @@ resource "oci_core_nat_gateway" vcn1-NGTWY {
 }
 
 
-resource "oci_core_route_table" "VCN1-RT" {
+resource "oci_core_route_table" "VCN1_RT" {
   count = var.create_vcn_subnet == true ? 1 : 0
   compartment_id = var.compartment_ocid
 
@@ -154,7 +154,7 @@ resource "oci_core_route_table" "VCN1-RT" {
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_nat_gateway.vcn1-NGTWY[0].id
+    network_entity_id = oci_core_nat_gateway.vcn1_ngtwy[0].id
     description       = "Private subnet egress via NAT Gateway"
   }
 
@@ -163,7 +163,7 @@ resource "oci_core_route_table" "VCN1-RT" {
 }
 
 
-resource "oci_core_default_security_list" "Default-Security-List-VCN1" {
+resource "oci_core_default_security_list" "Default_Security_List_VCN1" {
   compartment_id = var.compartment_ocid
   count = var.create_vcn_subnet == true ? 1 : 0
 
@@ -223,7 +223,7 @@ resource "oci_core_default_security_list" "Default-Security-List-VCN1" {
 }
 
 # Internet Gateway for public subnet egress
-resource "oci_core_internet_gateway" "vcn1-IGW" {
+resource "oci_core_internet_gateway" "vcn1_IGW" {
   compartment_id = var.compartment_ocid
   display_name   = "IGW"
   vcn_id         = oci_core_vcn.vcn1[0].id
@@ -232,7 +232,7 @@ resource "oci_core_internet_gateway" "vcn1-IGW" {
 }
 
 # Route table for public subnet (default route to IGW)
-resource "oci_core_route_table" "VCN1-PUB-RT" {
+resource "oci_core_route_table" "VCN1_PUB_RT" {
   count          = var.create_vcn_subnet == true ? 1 : 0
   compartment_id = var.compartment_ocid
 
@@ -243,7 +243,7 @@ resource "oci_core_route_table" "VCN1-PUB-RT" {
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_internet_gateway.vcn1-IGW[0].id
+    network_entity_id = oci_core_internet_gateway.vcn1_IGW[0].id
     description       = "Internet access via IGW"
   }
 
@@ -251,7 +251,7 @@ resource "oci_core_route_table" "VCN1-PUB-RT" {
 }
 
 # Public Subnet for Compute
-resource "oci_core_subnet" "vcn1-pub-subnet" {
+resource "oci_core_subnet" "vcn1_pub_subnet" {
   cidr_block                 = cidrsubnet(var.vcn_cidr[0],8,2)
   compartment_id             = var.compartment_ocid
   dhcp_options_id            = oci_core_vcn.vcn1[0].default_dhcp_options_id
@@ -261,16 +261,16 @@ resource "oci_core_subnet" "vcn1-pub-subnet" {
   }
   prohibit_internet_ingress  = "false"
   prohibit_public_ip_on_vnic = "false"
-  route_table_id             = oci_core_route_table.VCN1-PUB-RT[0].id
+  route_table_id             = oci_core_route_table.VCN1_PUB_RT[0].id
   security_list_ids = [
-    oci_core_security_list.VCN1-PUBLIC-SL[0].id,
+    oci_core_security_list.VCN1_PUBLIC_SL[0].id,
   ]
   vcn_id = oci_core_vcn.vcn1[0].id
   count  = var.create_vcn_subnet == true ? 1 : 0
 }
 
 # Security List for Private Subnet (22, 5432 from within VCN)
-resource "oci_core_security_list" "VCN1-PRIVATE-SL" {
+resource "oci_core_security_list" "VCN1_PRIVATE_SL" {
   count          = var.create_vcn_subnet == true ? 1 : 0
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.vcn1[0].id
@@ -307,7 +307,7 @@ resource "oci_core_security_list" "VCN1-PRIVATE-SL" {
 }
 
 # Security List for Public Subnet (22, 443, 8443, 8000, 9000 from Internet)
-resource "oci_core_security_list" "VCN1-PUBLIC-SL" {
+resource "oci_core_security_list" "VCN1_PUBLIC_SL" {
   count          = var.create_vcn_subnet == true ? 1 : 0
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.vcn1[0].id

@@ -30,9 +30,9 @@ resource oci_psql_db_system psql_inst_1 {
     maintenance_window_start = "FRI 04:00"
   }
   network_details {
-    nsg_ids = var.create_vcn_subnet == true ? [oci_core_network_security_group.vcn1-nsg[0].id] : []
+    nsg_ids = var.create_vcn_subnet == true ? [oci_core_network_security_group.vcn1_nsg[0].id] : []
     #primary_db_endpoint_private_ip = 
-    subnet_id      = var.create_vcn_subnet == true ?  oci_core_subnet.vcn1-psql-priv-subnet[0].id : var.psql_subnet_ocid
+    subnet_id      = var.create_vcn_subnet == true ?  oci_core_subnet.vcn1_psql_priv_subnet[0].id : var.psql_subnet_ocid
   }
    shape = var.psql_shape_name
   
