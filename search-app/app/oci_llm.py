@@ -178,11 +178,11 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
 
         # Try chat() path first
         try:
-            from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
+            from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
             details = _safe_build(
                 ChatDetails,
                 compartment_id=comp_id,
-                model_id=model_id,
+                serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
                 messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -201,12 +201,12 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
 
         # Fallback to generate_text()
         try:
-            from oci.generative_ai_inference.models import GenerateTextDetails
+            from oci.generative_ai_inference.models import GenerateTextDetails, OnDemandServingMode, TextContent
             details = _safe_build(
                 GenerateTextDetails,
                 compartment_id=comp_id,
-                model_id=model_id,
-                prompt=prompt,
+                serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
+                input=[_safe_build(TextContent, text=prompt)],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -245,7 +245,7 @@ def oci_try_chat_debug(question: str, context: str, max_tokens: int = 512, tempe
     if client is None or settings.llm_provider != "oci":
         return None, "no_client", []
     try:
-        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
+        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
         comp_id = settings.oci_compartment_id
         model_id = settings.oci_genai_model_id
         if not comp_id or not model_id:
@@ -257,7 +257,7 @@ def oci_try_chat_debug(question: str, context: str, max_tokens: int = 512, tempe
         details = _safe_build(
             ChatDetails,
             compartment_id=comp_id,
-            model_id=model_id,
+            serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
             messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
             max_tokens=max_tokens,
             temperature=temperature,
@@ -275,7 +275,7 @@ def oci_try_text_debug(question: str, context: str, max_tokens: int = 512, tempe
     if client is None or settings.llm_provider != "oci":
         return None, "no_client", []
     try:
-        from oci.generative_ai_inference.models import GenerateTextDetails
+        from oci.generative_ai_inference.models import GenerateTextDetails, OnDemandServingMode, TextContent
         comp_id = settings.oci_compartment_id
         model_id = settings.oci_genai_model_id
         if not comp_id or not model_id:
@@ -287,8 +287,8 @@ def oci_try_text_debug(question: str, context: str, max_tokens: int = 512, tempe
         details = _safe_build(
             GenerateTextDetails,
             compartment_id=comp_id,
-            model_id=model_id,
-            prompt=prompt,
+            serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
+            input=[_safe_build(TextContent, text=prompt)],
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -306,7 +306,7 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
     if client is None or settings.llm_provider != "oci":
         return None
     try:
-        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
+        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
         comp_id = settings.oci_compartment_id
         model_id = settings.oci_genai_model_id
         if not comp_id or not model_id:
@@ -318,7 +318,7 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
         details = _safe_build(
             ChatDetails,
             compartment_id=comp_id,
-            model_id=model_id,
+            serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
             messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
             max_tokens=max_tokens,
             temperature=temperature,
@@ -335,7 +335,7 @@ def oci_chat_completion_text_only(question: str, context: str, max_tokens: int =
     if client is None or settings.llm_provider != "oci":
         return None
     try:
-        from oci.generative_ai_inference.models import GenerateTextDetails
+        from oci.generative_ai_inference.models import GenerateTextDetails, OnDemandServingMode, TextContent
         comp_id = settings.oci_compartment_id
         model_id = settings.oci_genai_model_id
         if not comp_id or not model_id:
@@ -347,8 +347,8 @@ def oci_chat_completion_text_only(question: str, context: str, max_tokens: int =
         details = _safe_build(
             GenerateTextDetails,
             compartment_id=comp_id,
-            model_id=model_id,
-            prompt=prompt,
+            serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
+            input=[_safe_build(TextContent, text=prompt)],
             max_tokens=max_tokens,
             temperature=temperature,
         )
