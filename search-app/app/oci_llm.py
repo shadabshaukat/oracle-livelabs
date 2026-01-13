@@ -97,6 +97,18 @@ def _safe_build(model_cls, **kwargs):
         return model_cls()
 
 
+def _set_attr_if_possible(obj, name: str, value) -> None:
+    try:
+        setattr(obj, name, value)
+    except Exception:
+        pass
+
+
+def _apply_aliases(obj, mapping: dict[str, object]) -> None:
+    for k, v in mapping.items():
+        _set_attr_if_possible(obj, k, v)
+
+
 def _extract_text_from_oci_response(data) -> Optional[str]:
     """Attempt to extract text from a wide variety of OCI GenAI response shapes."""
     try:
@@ -204,14 +216,17 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
         # Try chat() path first
         try:
             from oci.generative_ai_inference.models import ChatDetails, Message, TextContent, OnDemandServingMode
+            sm = _safe_build(OnDemandServingMode, model_id=model_id)
+            _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
             details = _safe_build(
                 ChatDetails,
                 compartment_id=comp_id,
-                serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
+                serving_mode=sm,
                 messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+            _apply_aliases(details, {"compartment_id": comp_id, "compartmentId": comp_id, "servingMode": sm})
             try:
                 dd = details.to_dict() if hasattr(details, "to_dict") else None
                 if dd:
@@ -233,14 +248,17 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
         # Fallback to generate_text()
         try:
             from oci.generative_ai_inference.models import GenerateTextDetails, OnDemandServingMode, TextContent
+            sm = _safe_build(OnDemandServingMode, model_id=model_id)
+            _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
             details = _safe_build(
                 GenerateTextDetails,
                 compartment_id=comp_id,
-                serving_mode=_safe_build(OnDemandServingMode, model_id=model_id),
+                serving_mode=sm,
                 input=[_safe_build(TextContent, text=prompt)],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+            _apply_aliases(details, {"compartment_id": comp_id, "compartmentId": comp_id, "servingMode": sm})
             try:
                 dd = details.to_dict() if hasattr(details, "to_dict") else None
                 if dd:
@@ -360,9 +378,16 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
             max_tokens=max_tokens,
             temperature=temperature,
         )
+        try:
+            dd = details.to_dict() if hasattr(details, "to_dict") else None
+            if dd:
+                logger.info("OCI chat_only details built: keys=%s has_compartment=%s", list(dd.keys())[:10], bool(dd.get("compartmentId") or dd.get("compartment_id")))
+        except Exception:
+            pass
         resp = client.chat(details)
         return _extract_text_from_oci_response(resp.data)
-    except Exception:
+    except Exception as e:
+        logger.exception("oci_chat_completion_chat_only exception: %s", e)
         return None
 
 
@@ -389,7 +414,14 @@ def oci_chat_completion_text_only(question: str, context: str, max_tokens: int =
             max_tokens=max_tokens,
             temperature=temperature,
         )
+        try:
+            dd = details.to_dict() if hasattr(details, "to_dict") else None
+            if dd:
+                logger.info("OCI text_only details built: keys=%s has_compartment=%s", list(dd.keys())[:10], bool(dd.get("compartmentId") or dd.get("compartment_id")))
+        except Exception:
+            pass
         resp = client.generate_text(details)
         return _extract_text_from_oci_response(resp.data)
-    except Exception:
+    except Exception as e:
+        logger.exception("oci_chat_completion_text_only exception: %s", e)
         return None
