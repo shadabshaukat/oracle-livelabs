@@ -212,6 +212,12 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+            try:
+                dd = details.to_dict() if hasattr(details, "to_dict") else None
+                if dd:
+                    logger.info("OCI chat details built: keys=%s has_compartment=%s", list(dd.keys())[:10], bool(dd.get("compartmentId") or dd.get("compartment_id")))
+            except Exception:
+                pass
             resp = client.chat(details)
             out = _extract_text_from_oci_response(resp.data)
             if out:
@@ -235,6 +241,12 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+            try:
+                dd = details.to_dict() if hasattr(details, "to_dict") else None
+                if dd:
+                    logger.info("OCI generate_text details built: keys=%s has_compartment=%s", list(dd.keys())[:10], bool(dd.get("compartmentId") or dd.get("compartment_id")))
+            except Exception:
+                pass
             resp = client.generate_text(details)
             out = _extract_text_from_oci_response(resp.data)
             if out:
