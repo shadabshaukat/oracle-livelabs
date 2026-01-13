@@ -93,6 +93,59 @@ def ready():
         return {"ready": False, "error": str(e), **checks}
 
 
+@app.get("/api/chunks-preview")
+def chunks_preview(doc_id: int, limit: int = 20):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, document_id, chunk_index, content_chars, LEFT(content, 600)
+                FROM chunks
+                WHERE document_id = %s
+                ORDER BY chunk_index ASC
+                LIMIT %s
+                """,
+                (doc_id, limit),
+            )
+            rows = cur.fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        out.append({
+            "chunk_id": int(r[0]),
+            "document_id": int(r[1]),
+            "chunk_index": int(r[2]),
+            "content_chars": int(r[3]) if r[3] is not None else None,
+            "snippet": r[4] or "",
+        })
+    return out
+
+
+@app.get("/api/doc-summary")
+def doc_summary(doc_id: int):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, source_path, source_type, COALESCE(title, '') FROM documents WHERE id = %s",
+                    (doc_id,),
+                )
+                doc = cur.fetchone()
+                if not doc:
+                    return JSONResponse(status_code=404, content={"error": "document not found"})
+                cur.execute("SELECT count(*) FROM chunks WHERE document_id = %s", (doc_id,))
+                cnt = int(cur.fetchone()[0])
+        return {
+            "document_id": int(doc[0]),
+            "file_name": (doc[1] or "").rsplit("/", 1)[-1] if doc[1] else "",
+            "source_path": doc[1] or "",
+            "source_type": doc[2] or "",
+            "title": doc[3] or "",
+            "chunk_count": cnt,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/upload")
 async def upload(files: List[UploadFile] = File(...)):
     results: List[Dict[str, Any]] = []
