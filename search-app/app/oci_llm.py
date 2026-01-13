@@ -243,12 +243,14 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
             )
             sm = _safe_build(OnDemandServingMode, model_id=model_id)
             _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
-            # Build GenericChatRequest with message list
-            txt = _safe_build(TextContent, text=prompt)
-            msg = _safe_build(Message, role="USER", content=[txt])
+            # Build GenericChatRequest with system + user messages to enforce direct answering from context
+            sys_txt = _safe_build(TextContent, text="You are a helpful assistant. Answer directly based ONLY on the provided context. If the context is insufficient, say 'No answer found in the provided context.' Do not ask for more input.")
+            sys_msg = _safe_build(Message, role="SYSTEM", content=[sys_txt])
+            user_txt = _safe_build(TextContent, text=f"Question: {question}\n\nContext:\n{context[:12000]}")
+            user_msg = _safe_build(Message, role="USER", content=[user_txt])
             chat_req = _safe_build(GenericChatRequest,
                                    api_format=BaseChatRequest.API_FORMAT_GENERIC,
-                                   messages=[msg],
+                                   messages=[sys_msg, user_msg],
                                    max_tokens=int(max_tokens),
                                    temperature=float(temperature))
             details = _safe_build(
@@ -405,11 +407,13 @@ def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int =
         )
         sm = _safe_build(OnDemandServingMode, model_id=model_id)
         _apply_aliases(sm, {"model_id": model_id, "modelId": model_id})
-        txt = _safe_build(TextContent, text=prompt)
-        msg = _safe_build(Message, role="USER", content=[txt])
+        sys_txt = _safe_build(TextContent, text="You are a helpful assistant. Answer directly based ONLY on the provided context. If the context is insufficient, say 'No answer found in the provided context.' Do not ask for more input.")
+        sys_msg = _safe_build(Message, role="SYSTEM", content=[sys_txt])
+        user_txt = _safe_build(TextContent, text=f"Question: {question}\n\nContext:\n{context[:12000]}")
+        user_msg = _safe_build(Message, role="USER", content=[user_txt])
         chat_req = _safe_build(GenericChatRequest,
                                api_format=BaseChatRequest.API_FORMAT_GENERIC,
-                               messages=[msg],
+                               messages=[sys_msg, user_msg],
                                max_tokens=int(max_tokens),
                                temperature=float(temperature))
         details = _safe_build(
