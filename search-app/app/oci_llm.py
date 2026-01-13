@@ -62,13 +62,38 @@ def _build_oci_clients():
 
 
 def _safe_build(model_cls, **kwargs):
-    """Construct model by filtering kwargs to supported parameters (SDK compatibility)."""
+    """Construct SDK model objects robustly.
+    Strategy:
+    1) Try passing all kwargs (many OCI SDK models accept **kwargs)
+    2) If that fails, filter by explicit parameters from __init__
+    3) If still failing, instantiate empty and setattr the provided kwargs.
+    """
     try:
-        sig = inspect.signature(model_cls.__init__)
-        allowed = {k: v for k, v in kwargs.items() if k in sig.parameters}
-        return model_cls(**allowed)
+        # First try: pass all kwargs directly
+        try:
+            return model_cls(**kwargs)
+        except Exception:
+            pass
+        # Second try: filter by signature if not var-keyword
+        try:
+            sig = inspect.signature(model_cls.__init__)
+            # If __init__ supports **kwargs, pass everything
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                return model_cls(**kwargs)
+            allowed = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return model_cls(**allowed)
+        except Exception:
+            pass
+        # Third try: construct empty and set attributes
+        obj = model_cls()
+        for k, v in kwargs.items():
+            try:
+                setattr(obj, k, v)
+            except Exception:
+                continue
+        return obj
     except Exception:
-        # Last resort: try empty construction
+        # Last resort fallback
         return model_cls()
 
 

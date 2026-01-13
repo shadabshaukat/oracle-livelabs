@@ -314,6 +314,28 @@ def llm_debug_get(q: str | None = None, ctx: str | None = None):
         return {"provider": provider, "error": str(e)}
 
 
+@app.get("/api/llm-config")
+def llm_config():
+    def _mask(ocid: str | None, keep_prefix: int = 8, keep_suffix: int = 6) -> str | None:
+        if not ocid:
+            return None
+        if len(ocid) <= keep_prefix + keep_suffix:
+            return ocid
+        return ocid[:keep_prefix] + "..." + ocid[-keep_suffix:]
+
+    return {
+        "provider": settings.llm_provider,
+        "oci_region": settings.oci_region,
+        "oci_genai_endpoint": settings.oci_genai_endpoint,
+        "compartment_id_present": bool(settings.oci_compartment_id),
+        "compartment_id": _mask(settings.oci_compartment_id),
+        "model_id_present": bool(settings.oci_genai_model_id),
+        "model_id": _mask(settings.oci_genai_model_id, 12, 6),
+        "config_file": settings.oci_config_file,
+        "config_profile": settings.oci_config_profile,
+    }
+
+
 def main():
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, workers=settings.workers, reload=False)
 
