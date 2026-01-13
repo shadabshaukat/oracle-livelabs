@@ -33,19 +33,17 @@
         </div>
       </div>
 
+      <div class="row wrap middle" style="justify-content: center; margin: 8px 0;">
+        <label><input type="radio" name="mode" value="hybrid" checked> Hybrid</label>
+        <label><input type="radio" name="mode" value="semantic"> Semantic</label>
+        <label><input type="radio" name="mode" value="fulltext"> Full-text</label>
+        <label><input type="radio" name="mode" value="rag"> RAG</label>
+      </div>
+
       <div id="settingsPanel" class="settings" hidden>
         <div class="row wrap">
           <div class="row no-grow">
-            <label for="mode">Mode</label>
-            <select id="mode">
-              <option value="hybrid" selected>Hybrid</option>
-              <option value="semantic">Semantic</option>
-              <option value="fulltext">Full-text</option>
-              <option value="rag">RAG</option>
-            </select>
-          </div>
-          <div class="row no-grow">
-            <label for="topk" class="leftpad">Top K</label>
+            <label for="topk">Top K</label>
             <input id="topk" type="number" value="25" min="1" max="50" />
           </div>
           <div class="row no-grow">
@@ -178,13 +176,13 @@
         const source = h.source_path ? escapeHtml(h.source_path) : '';
         const distance = (h.distance !== null && h.distance !== undefined) ? `distance: ${h.distance.toFixed ? h.distance.toFixed(4) : h.distance}` : '';
         const rank = (h.rank !== null && h.rank !== undefined) ? `rank: ${h.rank.toFixed ? h.rank.toFixed(4) : h.rank}` : '';
+        const num = i + 1;
         div.innerHTML = `
-          <div class="hit-head">
-            <div class="hit-title">${title || '(untitled)'}</div>
-            <div class="hit-badges">${distance ? `<span class="badge">${distance}</span>` : ''}${rank ? `<span class="badge">${rank}</span>` : ''}</div>
-          </div>
-          <div class="hit-meta">${source}</div>
-          <div class="hit-content">${highlight(h.content || '', query)}</div>
+          <details open>
+            <summary>${num}. ${title || '(untitled)'} <span class="badge">${distance ? distance : ''}</span><span class="badge">${rank ? rank : ''}</span></summary>
+            <div class="hit-meta">${source}</div>
+            <div class="hit-content">${highlight(h.content || '', query)}</div>
+          </details>
         `;
         wrap.appendChild(div);
       }
@@ -250,6 +248,8 @@
               refsEl.innerHTML = '';
             }
           }
+        } else {
+          answerRow.hidden = true;
         }
         renderResults(data.hits, query);
       } catch (e) {
@@ -291,8 +291,12 @@
       }
     });
 
-    document.getElementById('mode').addEventListener('change', () => {
-      if (document.getElementById('autoSearch').checked) doSearch();
+    document.querySelectorAll('input[name="mode"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (document.getElementById('query').value.trim() && document.getElementById('autoSearch').checked) {
+          doSearch();
+        }
+      });
     });
     document.getElementById('topk').addEventListener('change', () => {
       if (document.getElementById('autoSearch').checked) doSearch();
