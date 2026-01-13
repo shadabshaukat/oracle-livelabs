@@ -290,6 +290,30 @@ async def llm_debug(payload: Dict[str, Any] | None = None):
         return {"provider": provider, "error": str(e)}
 
 
+@app.get("/api/llm-debug")
+def llm_debug_get(q: str | None = None, ctx: str | None = None):
+    """
+    Diagnostic endpoint (GET) to avoid JSON body issues. Provide q and ctx as query params.
+    Example: /api/llm-debug?q=Question&ctx=Context
+    """
+    q = q or "Test connectivity. Summarize the following context in one sentence."
+    ctx = ctx or "This is a test context from the /api/llm-debug endpoint."
+    provider = settings.llm_provider
+    if provider != "oci":
+        return {"provider": provider, "error": "llm-debug only supports provider=oci"}
+    try:
+        from .oci_llm import oci_try_chat_debug, oci_try_text_debug
+        ans_chat, type_chat, fields_chat = oci_try_chat_debug(q, ctx)
+        ans_text, type_text, fields_text = oci_try_text_debug(q, ctx)
+        return {
+            "provider": provider,
+            "chat": {"ok": bool(ans_chat), "type": type_chat, "fields": fields_chat[:50]},
+            "text": {"ok": bool(ans_text), "type": type_text, "fields": fields_text[:50]},
+        }
+    except Exception as e:
+        return {"provider": provider, "error": str(e)}
+
+
 def main():
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, workers=settings.workers, reload=False)
 
