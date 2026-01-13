@@ -249,6 +249,47 @@ async def llm_test(payload: Dict[str, Any] | None = None):
     }
 
 
+@app.post("/api/llm-debug")
+async def llm_debug(payload: Dict[str, Any] | None = None):
+    """
+    Diagnostic endpoint to introspect OCI GenAI response shapes.
+    Returns per-path (chat, text) whether output text was extracted and the response type/fields.
+    """
+    q = (payload or {}).get("question") if payload else None
+    ctx = (payload or {}).get("context") if payload else None
+    if not q:
+        q = "Test connectivity. Summarize the following context in one sentence."
+    if not ctx:
+        ctx = "This is a test context from the /api/llm-debug endpoint."
+
+    provider = settings.llm_provider
+    if provider != "oci":
+        return {
+            "provider": provider,
+            "error": "llm-debug only supports provider=oci",
+        }
+
+    try:
+        from .oci_llm import oci_try_chat_debug, oci_try_text_debug
+        ans_chat, type_chat, fields_chat = oci_try_chat_debug(q, ctx)
+        ans_text, type_text, fields_text = oci_try_text_debug(q, ctx)
+        return {
+            "provider": provider,
+            "chat": {
+                "ok": bool(ans_chat),
+                "type": type_chat,
+                "fields": fields_chat[:50],
+            },
+            "text": {
+                "ok": bool(ans_text),
+                "type": type_text,
+                "fields": fields_text[:50],
+            },
+        }
+    except Exception as e:
+        return {"provider": provider, "error": str(e)}
+
+
 def main():
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, workers=settings.workers, reload=False)
 

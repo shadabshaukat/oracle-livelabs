@@ -193,9 +193,9 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 logger.info("OCI GenAI chat() response extracted (chars=%d)", len(out))
                 return out
             try:
-                logger.warning("OCI GenAI chat(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
+                logger.info("OCI GenAI chat(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
             except Exception:
-                logger.warning("OCI GenAI chat(): no text extracted; unable to introspect resp.data")
+                logger.info("OCI GenAI chat(): no text extracted; unable to introspect resp.data")
         except Exception as e:
             logger.debug("OCI chat() path not available or failed: %s", e)
 
@@ -216,9 +216,9 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
                 logger.info("OCI GenAI generate_text() response extracted (chars=%d)", len(out))
                 return out
             try:
-                logger.warning("OCI GenAI generate_text(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
+                logger.info("OCI GenAI generate_text(): no text extracted; type=%s fields=%s", type(resp.data), dir(resp.data))
             except Exception:
-                logger.warning("OCI GenAI generate_text(): no text extracted; unable to introspect resp.data")
+                logger.info("OCI GenAI generate_text(): no text extracted; unable to introspect resp.data")
             return None
         except Exception as e:
             logger.debug("OCI generate_text() path failed: %s", e)
@@ -226,6 +226,76 @@ def oci_chat_completion(question: str, context: str, max_tokens: int = 512, temp
     except Exception as e:
         logger.exception("OCI GenAI call failed: %s", e)
         return None
+
+
+def _introspect_obj(data) -> tuple[str, list[str]]:
+    try:
+        t = str(type(data))
+    except Exception:
+        t = "?"
+    try:
+        fields = list(dir(data))
+    except Exception:
+        fields = []
+    return t, fields
+
+
+def oci_try_chat_debug(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> tuple[Optional[str], str, list[str]]:
+    client, _ = _build_oci_clients()
+    if client is None or settings.llm_provider != "oci":
+        return None, "no_client", []
+    try:
+        from oci.generative_ai_inference.models import ChatDetails, Message, TextContent
+        comp_id = settings.oci_compartment_id
+        model_id = settings.oci_genai_model_id
+        if not comp_id or not model_id:
+            return None, "missing_ids", []
+        prompt = (
+            "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
+            f"Question: {question}\n\nContext:\n{context[:12000]}"
+        )
+        details = _safe_build(
+            ChatDetails,
+            compartment_id=comp_id,
+            model_id=model_id,
+            messages=[_safe_build(Message, role="USER", content=[_safe_build(TextContent, text=prompt)])],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        resp = client.chat(details)
+        t, fields = _introspect_obj(resp.data)
+        return _extract_text_from_oci_response(resp.data), t, fields
+    except Exception:
+        return None, "exception", []
+
+
+def oci_try_text_debug(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> tuple[Optional[str], str, list[str]]:
+    client, _ = _build_oci_clients()
+    if client is None or settings.llm_provider != "oci":
+        return None, "no_client", []
+    try:
+        from oci.generative_ai_inference.models import GenerateTextDetails
+        comp_id = settings.oci_compartment_id
+        model_id = settings.oci_genai_model_id
+        if not comp_id or not model_id:
+            return None, "missing_ids", []
+        prompt = (
+            "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
+            f"Question: {question}\n\nContext:\n{context[:12000]}"
+        )
+        details = _safe_build(
+            GenerateTextDetails,
+            compartment_id=comp_id,
+            model_id=model_id,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        resp = client.generate_text(details)
+        t, fields = _introspect_obj(resp.data)
+        return _extract_text_from_oci_response(resp.data), t, fields
+    except Exception:
+        return None, "exception", []
 
 
 def oci_chat_completion_chat_only(question: str, context: str, max_tokens: int = 512, temperature: float = 0.2) -> Optional[str]:
