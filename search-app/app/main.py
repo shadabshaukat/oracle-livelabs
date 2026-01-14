@@ -158,7 +158,8 @@ async def upload(files: List[UploadFile] = File(...)):
                 local_path, oci_url, temp = save_upload_stream(f.file, title)
             else:
                 data = await f.read()
-                local_path, oci_url, temp = save_upload(data, title), None, None
+                local_path, oci_url = save_upload(data, title)
+                temp = None
 
             logger.info("Upload stored: backend=%s local=%s oci=%s", settings.storage_backend, local_path, "yes" if oci_url else "no")
 
