@@ -150,23 +150,16 @@ def doc_summary(doc_id: int):
 async def upload(files: List[UploadFile] = File(...)):
     results: List[Dict[str, Any]] = []
     for f in files:
+        data = await f.read()
+        local_path, oci_url = save_upload(data, Path(f.filename).name)
+        # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
+        logger.info("Upload stored: backend=%s local=%s oci=%s", settings.storage_backend, local_path, "yes" if oci_url else "no")
         try:
-            # Use streaming for OCI-involved backends to avoid loading whole file in RAM
-            if settings.storage_backend in {"oci", "both"}:
-                local_path, oci_url, temp = save_upload_stream(f.file, title)
-            else:
-                data = await f.read()
-                local_path, oci_url = save_upload(data, title)
-                temp = None
-
-            logger.info("Upload stored: backend=%s local=%s oci=%s", settings.storage_backend, local_path, "yes" if oci_url else "no")
-
             meta = {"filename": title}
             if oci_url:
                 meta["object_url"] = oci_url
-
             ing = ingest_file_path(local_path, title=title_no_ext, metadata=meta)
             results.append({
                 "filename": title,
@@ -184,14 +177,7 @@ async def upload(files: List[UploadFile] = File(...)):
                 "status": "error",
             })
         finally:
-            # Close/clean temp if used (for oci-only)
-            if temp:
-                try:
-                    temp.close()
-                except Exception:
-                    pass
-            # Optional delete for persistent local paths
-            if settings.delete_uploaded_after_ingest and settings.storage_backend in {"local", "both"}:
+            if settings.delete_uploaded_after_ingest:
                 try:
                     os.remove(local_path)
                 except Exception:
