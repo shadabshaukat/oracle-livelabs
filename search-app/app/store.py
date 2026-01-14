@@ -113,23 +113,20 @@ def save_upload(file_bytes: bytes, filename: str) -> Tuple[str, Optional[str]]:
 def save_upload_stream(fileobj, filename: str) -> Tuple[str, Optional[str]]:
     """Stream upload without loading whole file in memory.
     - If backend includes 'oci', stream to OCI using UploadManager.upload_stream
-    - Always write a local file for ingestion:
-        * when backend includes 'local' -> storage/uploads/YYYY/MM/DD/HHMMSS/<basename>
-        * when backend is 'oci' only   -> storage/tmp_uploads/YYYY/MM/DD/HHMMSS/<basename>
+    - For ingestion, use a SpooledTemporaryFile (in-memory until threshold, then disk) for oci-only
+      or persistent storage/uploads/YYYY/MM/DD/HHMMSS/<basename> for local/both
     Returns (local_path_for_ingest, oci_object_url_or_None).
+    The caller is responsible for closing/deleting the temp file after use if oci-only.
     """
     import shutil
     from typing import BinaryIO
+    from tempfile import SpooledTemporaryFile
 
     ensure_dirs()
     persist_local = settings.storage_backend in {"local", "both"}
 
     base_name = Path(filename).name.replace("..", ".")
     dated_rel = _timestamp_path(base_name)
-
-    base_dir = Path(settings.upload_dir) if persist_local else (Path(settings.data_dir) / "tmp_uploads")
-    target = base_dir / dated_rel
-    target.parent.mkdir(parents=True, exist_ok=True)
 
     oci_url: Optional[str] = None
 
@@ -172,15 +169,25 @@ def save_upload_stream(fileobj, filename: str) -> Tuple[str, Optional[str]]:
         except Exception as e:
             logger.exception("OCI streaming upload failed: %s", e)
 
-    # Rewind and copy to local target for ingestion
+    # Rewind stream and copy to local target for ingestion
     try:
         fileobj.seek(0)
     except Exception:
         pass
-    with open(target, "wb") as out:
-        shutil.copyfileobj(fileobj, out)
 
-    return str(target), oci_url
+    # For oci-only, use SpooledTemporaryFile (in-mem until threshold, then disk, auto-clean on close)
+    if not persist_local:
+        temp = SpooledTemporaryFile(max_size=2*1024*1024)  # 2MB in-mem threshold
+        shutil.copyfileobj(fileobj, temp)
+        temp.seek(0)
+        return temp.name, oci_url, temp  # Return path, url, temp (caller must close temp after use)
+    else:
+        # For local/both, persist to storage/uploads
+        target = Path(settings.upload_dir) / dated_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "wb") as out:
+            shutil.copyfileobj(fileobj, out)
+        return str(target), oci_url, None
 
 
 def insert_document(conn: psycopg.Connection, source_path: str, source_type: str, title: Optional[str] = None, metadata: Optional[dict] = None) -> int:
