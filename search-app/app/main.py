@@ -155,6 +155,7 @@ async def upload(files: List[UploadFile] = File(...)):
         # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
+        logger.info("Upload stored: backend=%s local=%s oci=%s", settings.storage_backend, local_path, "yes" if oci_url else "no")
         try:
             meta = {"filename": title}
             if oci_url:
@@ -165,6 +166,7 @@ async def upload(files: List[UploadFile] = File(...)):
                 "title": title_no_ext,
                 "document_id": ing.document_id,
                 "chunks": ing.num_chunks,
+                "object_url": oci_url,
                 "status": "ok",
             })
         except Exception as e:

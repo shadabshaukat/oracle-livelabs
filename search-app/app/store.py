@@ -68,23 +68,37 @@ def _upload_to_oci(bucket: str, object_name: str, data: bytes) -> Optional[str]:
         osc.put_object(ns, bucket, object_name, data)
         region = cfg.get("region") or settings.oci_region or ""
         url = f"https://objectstorage.{region}.oraclecloud.com/n/{urlquote(ns)}/b/{urlquote(bucket)}/o/{urlquote(object_name)}"
+        logger.info("OCI upload complete: bucket=%s object=%s url=%s", bucket, object_name, url)
         return url
-    except Exception:
+    except Exception as e:
+        logger.exception("OCI upload failed: bucket=%s object=%s error=%s", bucket, object_name if 'object_name' in locals() else '?', e)
         return None
 
 
 def save_upload(file_bytes: bytes, filename: str) -> Tuple[str, Optional[str]]:
-    """Save upload to local (dated path) and optionally upload to OCI bucket.
-    Returns (local_path, oci_object_url or None).
+    """Save upload respecting storage backend selection.
+    Always writes a local file for ingestion (under storage/uploads when backend includes 'local',
+    otherwise under a temporary path). Optionally uploads to OCI when backend includes 'oci'.
+    Returns (local_path_for_ingest, oci_object_url_or_None).
     """
     ensure_dirs()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
         raise ValueError(f"File too large (> {settings.max_upload_size_mb} MB)")
+
+    persist_local = settings.storage_backend in {"local", "both"}
+
     base_name = Path(filename).name.replace("..", ".")
     dated_rel = _timestamp_path(base_name)
-    target = Path(settings.upload_dir) / dated_rel
+
+    # Choose base dir: persistent uploads vs temp area
+    if persist_local:
+        base_dir = Path(settings.upload_dir)
+    else:
+        base_dir = Path(settings.data_dir) / "tmp_uploads"
+    target = base_dir / dated_rel
     target.parent.mkdir(parents=True, exist_ok=True)
+
     with open(target, "wb") as f:
         f.write(file_bytes)
 
@@ -92,6 +106,79 @@ def save_upload(file_bytes: bytes, filename: str) -> Tuple[str, Optional[str]]:
     if settings.storage_backend in {"oci", "both"} and settings.oci_os_bucket_name:
         obj_name = str(dated_rel).replace("\\", "/")
         oci_url = _upload_to_oci(settings.oci_os_bucket_name, obj_name, file_bytes)
+
+    return str(target), oci_url
+
+
+def save_upload_stream(fileobj, filename: str) -> Tuple[str, Optional[str]]:
+    """Stream upload without loading whole file in memory.
+    - If backend includes 'oci', stream to OCI using UploadManager.upload_stream
+    - Always write a local file for ingestion:
+        * when backend includes 'local' -> storage/uploads/YYYY/MM/DD/HHMMSS/<basename>
+        * when backend is 'oci' only   -> storage/tmp_uploads/YYYY/MM/DD/HHMMSS/<basename>
+    Returns (local_path_for_ingest, oci_object_url_or_None).
+    """
+    import shutil
+    from typing import BinaryIO
+
+    ensure_dirs()
+    persist_local = settings.storage_backend in {"local", "both"}
+
+    base_name = Path(filename).name.replace("..", ".")
+    dated_rel = _timestamp_path(base_name)
+
+    base_dir = Path(settings.upload_dir) if persist_local else (Path(settings.data_dir) / "tmp_uploads")
+    target = base_dir / dated_rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    oci_url: Optional[str] = None
+
+    # If using OCI, stream the file object to Object Storage first (then rewind for local copy)
+    if settings.storage_backend in {"oci", "both"} and settings.oci_os_bucket_name:
+        try:
+            import oci  # type: ignore
+            cfg = None
+            if settings.oci_config_file:
+                cfg = oci.config.from_file(settings.oci_config_file, settings.oci_config_profile)
+                if settings.oci_region:
+                    cfg["region"] = settings.oci_region
+            else:
+                required = [settings.oci_tenancy_ocid, settings.oci_user_ocid, settings.oci_fingerprint, settings.oci_private_key_path]
+                if all(required):
+                    cfg = {
+                        "tenancy": settings.oci_tenancy_ocid,
+                        "user": settings.oci_user_ocid,
+                        "fingerprint": settings.oci_fingerprint,
+                        "key_file": settings.oci_private_key_path,
+                        "pass_phrase": settings.oci_private_key_passphrase,
+                        "region": settings.oci_region,
+                    }
+            if cfg:
+                osc = oci.object_storage.ObjectStorageClient(cfg)
+                ns = osc.get_namespace().data
+                upload_manager = oci.object_storage.UploadManager(osc, allow_parallel_uploads=True)
+                # Rewind stream to start
+                try:
+                    fileobj.seek(0)
+                except Exception:
+                    pass
+                object_name = str(dated_rel).replace("\\", "/")
+                upload_manager.upload_stream(ns, settings.oci_os_bucket_name, object_name, fileobj)
+                region = cfg.get("region") or settings.oci_region or ""
+                oci_url = f"https://objectstorage.{region}.oraclecloud.com/n/{urlquote(ns)}/b/{urlquote(settings.oci_os_bucket_name)}/o/{urlquote(object_name)}"
+                logger.info("OCI streaming upload complete: bucket=%s object=%s url=%s", settings.oci_os_bucket_name, object_name, oci_url)
+            else:
+                logger.warning("OCI streaming upload skipped: missing OCI config")
+        except Exception as e:
+            logger.exception("OCI streaming upload failed: %s", e)
+
+    # Rewind and copy to local target for ingestion
+    try:
+        fileobj.seek(0)
+    except Exception:
+        pass
+    with open(target, "wb") as out:
+        shutil.copyfileobj(fileobj, out)
 
     return str(target), oci_url
 
