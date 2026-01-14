@@ -35,6 +35,8 @@ class Settings:
     data_dir: str = os.getenv("DATA_DIR", "storage")
     upload_dir: str = os.getenv("UPLOAD_DIR", "storage/uploads")
     model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", "storage/models")
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").lower()  # local | oci
+    oci_os_bucket_name: Optional[str] = os.getenv("OCI_OS_BUCKET_NAME")
     # Upload & parsing
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
     use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)
@@ -79,7 +81,7 @@ class Settings:
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    # OCI Generative AI configuration (when llm_provider=oci)
+    # OCI configuration
     oci_region: Optional[str] = os.getenv("OCI_REGION")
     oci_compartment_id: Optional[str] = os.getenv("OCI_COMPARTMENT_OCID")
     oci_genai_endpoint: Optional[str] = os.getenv("OCI_GENAI_ENDPOINT")

@@ -236,11 +236,13 @@
               const items = data.references.map((r, idx) => {
                 const fn = r.file_name || '';
                 const ft = r.file_type || '';
+                // Prefer link to Object Storage when available
+                const label = r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(fn || r.url)}</a>` : escapeHtml(fn);
                 // Find matching hit for chunk text (by chunk_id)
                 const match = data.hits.find(h => h.chunk_id === r.chunk_id);
                 const txt = match ? escapeHtml(match.content) : '';
                 return `<details>
-                  <summary>[${idx+1}] Source: ${fn}${ft ? ` (${ft})` : ''}</summary>
+                  <summary>[${idx+1}] Source: ${label}${ft ? ` (${escapeHtml(ft)})` : ''}</summary>
                   <p>${txt}</p>
                 </details>`;
               }).join('');

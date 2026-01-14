@@ -18,3 +18,8 @@ output "compute_public_ip" {
 output "compute_private_ip" {
   value = length(data.oci_core_vnic.app_host_primary_vnic) > 0 ? data.oci_core_vnic.app_host_primary_vnic[0].private_ip_address : null
 }
+
+output "uploads_bucket_name" {
+  value       = oci_objectstorage_bucket.uploads_bucket.name
+  description = "Object Storage bucket name for search-app uploads"
+}

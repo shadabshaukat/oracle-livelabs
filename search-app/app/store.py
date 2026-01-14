@@ -4,9 +4,11 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 import psycopg
+from datetime import datetime
+from urllib.parse import quote as urlquote
 
 from .config import settings
 from .db import get_conn
@@ -29,16 +31,69 @@ def ensure_dirs() -> None:
     Path(settings.model_cache_dir).mkdir(parents=True, exist_ok=True)
 
 
-def save_upload(file_bytes: bytes, filename: str) -> str:
+def _timestamp_path(base_name: str) -> Path:
+    now = datetime.utcnow()
+    # YYYY/MM/DD/HHMMSS structure
+    sub = Path(str(now.year), f"{now.month:02d}", f"{now.day:02d}", now.strftime("%H%M%S"))
+    return sub / base_name
+
+
+def _upload_to_oci(bucket: str, object_name: str, data: bytes) -> Optional[str]:
+    """Upload bytes to OCI Object Storage and return object URL if successful."""
+    try:
+        import oci  # type: ignore
+        # Build config via file or env (compatible with app config)
+        cfg = None
+        if settings.oci_config_file:
+            cfg = oci.config.from_file(settings.oci_config_file, settings.oci_config_profile)
+            if settings.oci_region:
+                cfg["region"] = settings.oci_region
+        else:
+            # API key envs path
+            required = [settings.oci_tenancy_ocid, settings.oci_user_ocid, settings.oci_fingerprint, settings.oci_private_key_path]
+            if all(required):
+                cfg = {
+                    "tenancy": settings.oci_tenancy_ocid,
+                    "user": settings.oci_user_ocid,
+                    "fingerprint": settings.oci_fingerprint,
+                    "key_file": settings.oci_private_key_path,
+                    "pass_phrase": settings.oci_private_key_passphrase,
+                    "region": settings.oci_region,
+                }
+        if not cfg:
+            return None
+        osc = oci.object_storage.ObjectStorageClient(cfg)
+        # Discover namespace if not provided
+        ns = osc.get_namespace().data
+        osc.put_object(ns, bucket, object_name, data)
+        region = cfg.get("region") or settings.oci_region or ""
+        url = f"https://objectstorage.{region}.oraclecloud.com/n/{urlquote(ns)}/b/{urlquote(bucket)}/o/{urlquote(object_name)}"
+        return url
+    except Exception:
+        return None
+
+
+def save_upload(file_bytes: bytes, filename: str) -> Tuple[str, Optional[str]]:
+    """Save upload to local (dated path) and optionally upload to OCI bucket.
+    Returns (local_path, oci_object_url or None).
+    """
     ensure_dirs()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
         raise ValueError(f"File too large (> {settings.max_upload_size_mb} MB)")
-    safe_name = filename.replace("..", ".").replace("/", "_")
-    target = Path(settings.upload_dir) / safe_name
+    base_name = Path(filename).name.replace("..", ".")
+    dated_rel = _timestamp_path(base_name)
+    target = Path(settings.upload_dir) / dated_rel
+    target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "wb") as f:
         f.write(file_bytes)
-    return str(target)
+
+    oci_url: Optional[str] = None
+    if settings.storage_backend in {"oci", "both"} and settings.oci_os_bucket_name:
+        obj_name = str(dated_rel).replace("\\", "/")
+        oci_url = _upload_to_oci(settings.oci_os_bucket_name, obj_name, file_bytes)
+
+    return str(target), oci_url
 
 
 def insert_document(conn: psycopg.Connection, source_path: str, source_type: str, title: Optional[str] = None, metadata: Optional[dict] = None) -> int:

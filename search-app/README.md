@@ -70,6 +70,10 @@ Environment variables (see .env.example):
 - EMBEDDING_MODEL, EMBEDDING_DIM (default MiniLM 384)
 - PGVECTOR_METRIC (cosine|l2|ip), PGVECTOR_LISTS (~sqrt(n)), PGVECTOR_PROBES (runtime probes)
 - FTS_CONFIG (default english)
+- Storage backend:
+  - STORAGE_BACKEND=local|oci|both (default local)
+  - OCI_OS_BUCKET_NAME (required when STORAGE_BACKEND includes 'oci')
+  - Files are saved locally under storage/uploads/YYYY/MM/DD/HHMMSS/<filename>; when using 'oci' or 'both', the same object path is used in OCI Object Storage and its URL is stored in document metadata as object_url. The UI shows a clickable link in References when available.
 - RAG LLM provider:
   - OpenAI: set LLM_PROVIDER=openai and OPENAI_API_KEY
   - OCI GenAI (preferred for this app): set LLM_PROVIDER=oci and configure:

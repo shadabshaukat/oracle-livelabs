@@ -143,6 +143,14 @@ variable "compute_boot_volume_size_in_gbs" {
   default = 50
 }
 
+## Object Storage
+
+variable "object_storage_bucket_name" {
+  type        = string
+  description = "Object Storage bucket name to create for search-app uploads"
+  default     = "search-app-uploads"
+}
+
 ## OCI PostgreSQL Configuration (optional)
 
 variable "create_psql_configuration" {

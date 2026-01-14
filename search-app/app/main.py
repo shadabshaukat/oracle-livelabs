@@ -151,12 +151,15 @@ async def upload(files: List[UploadFile] = File(...)):
     results: List[Dict[str, Any]] = []
     for f in files:
         data = await f.read()
-        path = save_upload(data, f.filename)
-        # Use filename (without extension) as title and include original filename in metadata
+        local_path, oci_url = save_upload(data, Path(f.filename).name)
+        # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
         try:
-            ing = ingest_file_path(path, title=title_no_ext, metadata={"filename": title})
+            meta = {"filename": title}
+            if oci_url:
+                meta["object_url"] = oci_url
+            ing = ingest_file_path(local_path, title=title_no_ext, metadata=meta)
             results.append({
                 "filename": title,
                 "title": title_no_ext,
@@ -174,7 +177,7 @@ async def upload(files: List[UploadFile] = File(...)):
         finally:
             if settings.delete_uploaded_after_ingest:
                 try:
-                    os.remove(path)
+                    os.remove(local_path)
                 except Exception:
                     pass
     return {"results": results}
@@ -206,13 +209,17 @@ async def api_search(payload: Dict[str, Any]):
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, source_path, source_type, COALESCE(title, '') FROM documents WHERE id = ANY(%s)", (doc_ids,)
+                    "SELECT id, source_path, source_type, COALESCE(title, ''), metadata FROM documents WHERE id = ANY(%s)", (doc_ids,)
                 )
                 for row in cur.fetchall():
-                    # row: id, source_path, source_type, title
+                    # row: id, source_path, source_type, title, metadata
                     sp = row[1] or ""
                     fn = sp.rsplit("/", 1)[-1] if sp else ""
-                    doc_info[int(row[0])] = {"source_path": sp, "file_name": fn, "file_type": row[2] or "", "title": row[3]}
+                    meta = row[4] or {}
+                    object_url = None
+                    if isinstance(meta, dict):
+                        object_url = meta.get("object_url")
+                    doc_info[int(row[0])] = {"source_path": sp, "file_name": fn, "file_type": row[2] or "", "title": row[3], "object_url": object_url}
 
     hits_out = []
     for h in hits:
@@ -243,7 +250,8 @@ async def api_search(payload: Dict[str, Any]):
                 "file_name": e.get("file_name") or e.get("title") or "",
                 "file_type": e.get("file_type") or "",
                 "chunk_id": e.get("chunk_id"),
-                "href": f"#chunk-{e.get('chunk_id')}"
+                "href": f"#chunk-{e.get('chunk_id')}",
+                "url": doc_info.get(e.get("document_id", -1), {}).get("object_url") if doc_info else None,
             })
         out["references"] = refs
     return out

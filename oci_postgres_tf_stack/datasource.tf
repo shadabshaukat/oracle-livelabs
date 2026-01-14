@@ -18,3 +18,15 @@ resource "random_password" "psql_admin_password" {
 locals {
   psql_admin_password = var.psql_admin_password != "" ? var.psql_admin_password : random_password.psql_admin_password.result
 }
+
+# Object Storage bucket for uploads
+resource "oci_objectstorage_bucket" "uploads_bucket" {
+  compartment_id = var.compartment_ocid
+  name           = var.object_storage_bucket_name
+  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  access_type    = "NoPublicAccess"
+}
+
+data "oci_objectstorage_namespace" "ns" {
+  compartment_id = var.compartment_ocid
+}
