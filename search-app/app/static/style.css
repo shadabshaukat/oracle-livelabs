@@ -1,19 +1,18 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: #f6f7fb; color: #1f2937; }
-.topbar { background: #fff; color: #111827; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 10px; }
+.topbar { background: linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.35)), url('/static/redwood_blog_banner_1600x600.jpg') center/cover no-repeat; color: #ffffff; padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.35); display: flex; align-items: center; gap: 10px; }
 .topbar .spacer { flex: 1; }
 .topbar h1 { margin: 0; font-size: 16px; font-weight: 600; }
 .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; display: grid; grid-template-columns: 1fr; gap: 20px; }
 .card { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 .card--wide { grid-column: 1 / -1; }
-/* Hero banner: use background image, keep same padding/size, ensure readability */
-.hero { display: flex; flex-direction: column; align-items: center; gap: 16px; padding-top: 40px; padding-bottom: 30px; position: relative; overflow: hidden; background-image: url('/static/redwood_blog_banner_1600x600.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; color: #ffffff; }
-.hero::before { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,0.35); z-index: 0; border-radius: 10px; }
-.hero > * { position: relative; z-index: 1; }
+/* Hero banner */
+.hero { display: flex; flex-direction: column; align-items: center; gap: 16px; padding-top: 40px; padding-bottom: 30px; }
+
+
 .logo { font-size: 64px; font-weight: 700; letter-spacing: 4px; }
-/* Override colored logo letters within the hero to white for contrast over the banner */
-.hero .logo, .hero .logo .g-blue, .hero .logo .g-red, .hero .logo .g-yellow, .hero .logo .g-green { color: #ffffff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+
 .g-blue { color: #4285F4; }
 .g-red { color: #DB4437; }
 .g-yellow { color: #F4B400; }
@@ -22,6 +21,9 @@ html, body { margin: 0; padding: 0; font-family: system-ui, -apple-system, Segoe
 .search-input { flex: 1; padding: 12px 16px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
 .search-actions { display: flex; gap: 8px; align-items: center; }
 button.ghost { background: #fff; border: 1px solid #d1d5db; }
+/* Topbar ghost button styling over banner */
+.topbar button.ghost { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.4); color: #fff; }
+.topbar button.ghost:hover { filter: brightness(1.05); }
 .settings { width: 100%; max-width: 680px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }
 .row { display: flex; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
 .row.wrap { flex-wrap: wrap; }
@@ -68,7 +70,8 @@ button:hover { filter: brightness(0.98); }
 
 /* Dark mode */
 body.dark { background: #0f172a; color: #e5e7eb; }
-body.dark .topbar { background: #0b1220; color: #e5e7eb; border-bottom-color: #1f2937; }
+body.dark .topbar { background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('/static/redwood_blog_banner_1600x600.jpg') center/cover no-repeat; color: #e5e7eb; border-bottom-color: rgba(255,255,255,0.2); }
+body.dark .topbar button.ghost { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); color: #e5e7eb; }
 body.dark .card { background: #0b1220; box-shadow: none; border: 1px solid #1f2937; }
 body.dark .settings, body.dark .panel { background: #0b1220; border-color: #1f2937; color: #e5e7eb; }
 body.dark .search-input { background: #0b1220; color: #e5e7eb; border-color: #1f2937; }
@@ -78,5 +81,3 @@ body.dark .dropzone { background: #0b1220; border-color: #1f2937; color: #94a3b8
 body.dark .dropzone.dragover { background: #0e1530; border-color: #265fa3; color: #e5e7eb; }
 body.dark .hit { background: #0e1530; border-color: #1f2937; }
 body.dark .badge { background: #122255; color: #c7d2fe; }
-/* Dark mode: slightly stronger overlay for readability over banner */
-body.dark .hero::before { background: rgba(0,0,0,0.45); }
