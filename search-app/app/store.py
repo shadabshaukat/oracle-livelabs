@@ -364,6 +364,20 @@ def ingest_file_path(
 
     created_at = datetime.utcnow().isoformat()
     doc_metadata: Dict[str, Any] = dict(metadata or {})
+    if (
+        settings.storage_backend in {"oci", "both"}
+        and settings.oci_os_bucket_name
+        and not doc_metadata.get("object_url")
+    ):
+        try:
+            object_name = str(_relative_upload_path(file_path)).replace("\\", "/")
+            with open(file_path, "rb") as fh:
+                data = fh.read()
+            uploaded = _upload_to_oci(settings.oci_os_bucket_name, object_name, data)
+            if uploaded:
+                doc_metadata["object_url"] = uploaded
+        except Exception as exc:
+            logger.warning("Failed to upload source to OCI for %s: %s", file_path, exc)
 
     with get_conn() as conn:
         doc_id = insert_document(conn, user_id, space_id, file_path, source_type, title=title, metadata=doc_metadata)
