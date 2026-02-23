@@ -1048,7 +1048,7 @@
               </div>
               <div class="file-actions">
                 <a href="/api/doc-download?doc_id=${doc.id}" target="_blank" rel="noopener">Download</a>
-                <button class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
+                <button type="button" class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
               </div>
             `;
           } else {
@@ -1060,12 +1060,10 @@
               ${isImage && caption ? `<div class="file-caption">${escapeHtml(caption)}</div>` : ''}
               <div class="file-actions">
                 <a href="/api/doc-download?doc_id=${doc.id}" target="_blank" rel="noopener">Download</a>
-                <button class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
+                <button type="button" class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
               </div>
             `;
           }
-          const delBtn = div.querySelector('.link-btn');
-          delBtn.addEventListener('click', () => deleteLibraryItem(doc.id, title));
           const checkboxEl = div.querySelector('[data-doc-select]');
           checkboxEl.checked = selectedDocs.has(doc.id);
           checkboxEl.addEventListener('change', (e) => {
@@ -1076,6 +1074,16 @@
             }
             updateLibrarySelectionUI();
           });
+          const deleteBtn = div.querySelector('button[data-doc-id]');
+          if (deleteBtn) {
+            deleteBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const docId = parseInt(deleteBtn.getAttribute('data-doc-id'), 10);
+              const title = deleteBtn.getAttribute('data-doc-title') || '';
+              if (docId) deleteLibraryItem(docId, title);
+            });
+          }
           list.appendChild(div);
         });
         updateLibrarySelectionUI();
@@ -1083,7 +1091,6 @@
         list.textContent = 'Failed to load library.';
       }
     }
-
     document.getElementById('libraryRefreshBtn').addEventListener('click', loadLibrary);
     document.getElementById('librarySelectAllBtn').addEventListener('click', () => {
       if (!libraryDocs.length) return;
