@@ -1,0 +1,59 @@
+Git Branch + PR Workflow (Machine A → GitHub → Machine C)
+
+Prereqs:
+- Machine A has your local changes.
+- GitHub remote is named `origin`.
+- You want a new branch off `main` and a PR (do NOT merge).
+
+1) Machine A: create branch and push
+
+```bash
+cd /path/to/oracle-livelabs
+git status
+git fetch origin
+git checkout main
+git pull origin main
+
+# Create a new branch (replace <branch-name>)
+git checkout -b <branch-name>
+
+# Stage + commit your local changes
+git add -A
+git commit -m "<short commit message>"
+
+# Push new branch to GitHub
+git push -u origin <branch-name>
+```
+
+2) Machine A: open PR (choose one)
+
+Option A: GitHub CLI (gh)
+```bash
+gh pr create \
+  --base main \
+  --head <branch-name> \
+  --title "<PR title>" \
+  --body "<PR description>"
+```
+
+Option B: GitHub Web UI
+- Open your GitHub repo in a browser.
+- You will see “Compare & pull request” for the new branch.
+- Create the PR with base = main (do NOT merge).
+
+3) Machine C: fetch and checkout same branch
+
+```bash
+cd /path/to/oracle-livelabs
+git fetch origin
+git checkout -b <branch-name> origin/<branch-name>
+
+# Or if the branch already exists locally:
+git checkout <branch-name>
+git pull origin <branch-name>
+```
+
+Notes:
+- Replace <branch-name> with your chosen branch name, e.g. feature/library-bulk-actions
+- Keep the PR open until you’re ready to merge.
+- If you need to update the PR later, commit on Machine A and `git push` again.

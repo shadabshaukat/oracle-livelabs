@@ -9,6 +9,6 @@ if [ -f .env ]; then
   set +a
 fi
 
-# Install dependencies including optional PDF extras for robust PDF parsing
-uv sync --extra pdf
+# Install dependencies including optional PDF + image extras for robust parsing/search
+uv sync --extra pdf --extra image
 uv run searchapp

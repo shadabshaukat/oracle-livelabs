@@ -2,22 +2,29 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import mimetypes
+from time import perf_counter
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-from .auth import BasicAuthMiddleware
+from .auth import SessionOrBasicAuthMiddleware
 from .config import settings
 from .db import init_db, get_conn
-from .store import ensure_dirs, ingest_file_path, save_upload
-from .search import semantic_search, fulltext_search, hybrid_search, rag
+from .store import ensure_dirs, ingest_file_path, save_upload, create_par_for_object
+from .search import semantic_search, fulltext_search, hybrid_search, rag, image_search
 from .embeddings import get_model
+from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers
+from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space
+from .vision_embeddings import embed_image_paths, embed_image_texts, VisionModelUnavailable
 
 logger = logging.getLogger("searchapp")
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
@@ -29,9 +36,9 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Enterprise Search App", version="0.1.0")
-# Protect root UI and API with Basic Auth
-app.add_middleware(BasicAuthMiddleware, protect_paths=("/", "/api", "/docs", "/openapi.json", "/redoc"))
+app = FastAPI(title="Enterprise Search App", version="0.2.0")
+# Protect API with session or basic auth; UI root is public (renders login when unauthenticated)
+app.add_middleware(SessionOrBasicAuthMiddleware, protect_paths=("/api", "/docs", "/openapi.json", "/redoc"))
 
 if settings.allow_cors:
     app.add_middleware(
@@ -72,29 +79,47 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/ready")
-def ready():
-    checks = {"extensions": False, "documents_table": False, "chunks_table": False, "tsv_index": False, "vec_index": False}
+@app.get("/api/db-info")
+def db_info():
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pg_extension WHERE extname IN ('vector','pgcrypto')")
-                checks["extensions"] = len(cur.fetchall()) >= 2
-                cur.execute("SELECT to_regclass('public.documents') IS NOT NULL")
-                checks["documents_table"] = bool(cur.fetchone()[0])
-                cur.execute("SELECT to_regclass('public.chunks') IS NOT NULL")
-                checks["chunks_table"] = bool(cur.fetchone()[0])
+                cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port()")
+                db, user, host, port = cur.fetchone()
+        return {"database": db, "user": user, "host": host, "port": port}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/ready")
+def ready():
+    checks = {"extensions": False, "users": False, "spaces": False, "documents_table": False, "chunks_table": False, "tsv_index": False, "vec_index": False}
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_database()")
+                checks["database"] = cur.fetchone()[0]
+                cur.execute("SELECT 1 FROM pg_extension WHERE extname IN ('vector','pgcrypto','citext')")
+                checks["extensions"] = len(cur.fetchall()) >= 3
+                for tbl, key in [("users","users"),("spaces","spaces"),("documents","documents_table"),("chunks","chunks_table")]:
+                    cur.execute(f"SELECT to_regclass('public.{tbl}') IS NOT NULL")
+                    checks[key] = bool(cur.fetchone()[0])
                 cur.execute("SELECT to_regclass('public.idx_chunks_tsv') IS NOT NULL")
                 checks["tsv_index"] = bool(cur.fetchone()[0])
                 cur.execute("SELECT to_regclass('public.idx_chunks_embedding_ivfflat') IS NOT NULL")
                 checks["vec_index"] = bool(cur.fetchone()[0])
-        return {"ready": all(checks.values()), **checks}
+        ready_status = all(val for key, val in checks.items() if key != "database")
+        return {"ready": ready_status, **checks}
     except Exception as e:
         return {"ready": False, "error": str(e), **checks}
 
 
 @app.get("/api/chunks-preview")
-def chunks_preview(doc_id: int, limit: int = 20):
+def chunks_preview(request: Request, doc_id: int, limit: int = 20):
+    user = get_current_user_sync(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -102,10 +127,11 @@ def chunks_preview(doc_id: int, limit: int = 20):
                 SELECT id, document_id, chunk_index, content_chars, LEFT(content, 600)
                 FROM chunks
                 WHERE document_id = %s
+                  AND document_id IN (SELECT id FROM documents WHERE user_id = %s)
                 ORDER BY chunk_index ASC
                 LIMIT %s
                 """,
-                (doc_id, limit),
+                (doc_id, uid, limit),
             )
             rows = cur.fetchall()
     out: List[Dict[str, Any]] = []
@@ -121,13 +147,17 @@ def chunks_preview(doc_id: int, limit: int = 20):
 
 
 @app.get("/api/doc-summary")
-def doc_summary(doc_id: int):
+def doc_summary(request: Request, doc_id: int):
+    user = get_current_user_sync(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, source_path, source_type, COALESCE(title, '') FROM documents WHERE id = %s",
-                    (doc_id,),
+                    "SELECT id, source_path, source_type, COALESCE(title, '') FROM documents WHERE id = %s AND user_id = %s",
+                    (doc_id, uid),
                 )
                 doc = cur.fetchone()
                 if not doc:
@@ -147,11 +177,17 @@ def doc_summary(doc_id: int):
 
 
 @app.post("/api/upload")
-async def upload(files: List[UploadFile] = File(...)):
+async def upload(request: Request, files: List[UploadFile] = File(...), space_id: int | None = Form(None)):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    uemail = user.get("email")
+    sid = int(space_id) if space_id is not None else get_default_space_id(uid)
     results: List[Dict[str, Any]] = []
     for f in files:
         data = await f.read()
-        local_path, oci_url = save_upload(data, Path(f.filename).name)
+        local_path, oci_url = save_upload(data, Path(f.filename).name, user_email=uemail)
         # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
@@ -160,7 +196,15 @@ async def upload(files: List[UploadFile] = File(...)):
             meta = {"filename": title}
             if oci_url:
                 meta["object_url"] = oci_url
-            ing = ingest_file_path(local_path, title=title_no_ext, metadata=meta)
+            ing = ingest_file_path(local_path, user_id=uid, space_id=sid, title=title_no_ext, metadata=meta)
+            logger.info(
+                "Upload ingested: file=%s doc_id=%s chunks=%s user_id=%s space_id=%s",
+                title,
+                ing.document_id,
+                ing.num_chunks,
+                uid,
+                sid,
+            )
             results.append({
                 "filename": title,
                 "title": title_no_ext,
@@ -186,7 +230,13 @@ async def upload(files: List[UploadFile] = File(...)):
 
 
 @app.post("/api/search")
-async def api_search(payload: Dict[str, Any]):
+async def api_search(request: Request, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    sid = payload.get("space_id")
+    sid = int(sid) if sid is not None else get_default_space_id(uid)
     q = payload.get("query", "")
     mode = str(payload.get("mode", "hybrid")).lower()
     top_k = int(payload.get("top_k", 25))
@@ -195,14 +245,28 @@ async def api_search(payload: Dict[str, Any]):
 
     answer: str | None = None
     used_llm: bool = False
+    timings: Dict[str, Optional[int]] = {"db_ms": None, "llm_ms": None}
     if mode == "semantic":
-        hits = semantic_search(q, top_k=top_k)
+        db_start = perf_counter()
+        hits = semantic_search(q, top_k=top_k, user_id=uid, space_id=sid)
+        timings["db_ms"] = int(round((perf_counter() - db_start) * 1000))
     elif mode == "fulltext":
-        hits = fulltext_search(q, top_k=top_k)
+        db_start = perf_counter()
+        hits = fulltext_search(q, top_k=top_k, user_id=uid, space_id=sid)
+        timings["db_ms"] = int(round((perf_counter() - db_start) * 1000))
     elif mode == "rag":
-        answer, hits, used_llm = rag(q, mode="hybrid", top_k=top_k)
+        answer, hits, used_llm, timings = rag(
+            q,
+            mode="hybrid",
+            top_k=top_k,
+            user_id=uid,
+            space_id=sid,
+            return_timings=True,
+        )
     else:
-        hits = hybrid_search(q, top_k=top_k)
+        db_start = perf_counter()
+        hits = hybrid_search(q, top_k=top_k, user_id=uid, space_id=sid)
+        timings["db_ms"] = int(round((perf_counter() - db_start) * 1000))
 
     # Enrich with document metadata (source_path, title)
     doc_ids = sorted({h.document_id for h in hits})
@@ -211,7 +275,8 @@ async def api_search(payload: Dict[str, Any]):
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, source_path, source_type, COALESCE(title, ''), metadata FROM documents WHERE id = ANY(%s)", (doc_ids,)
+                    "SELECT id, source_path, source_type, COALESCE(title, ''), metadata FROM documents WHERE id = ANY(%s) AND user_id = %s",
+                    (doc_ids, uid),
                 )
                 for row in cur.fetchall():
                     # row: id, source_path, source_type, title, metadata
@@ -241,7 +306,11 @@ async def api_search(payload: Dict[str, Any]):
             entry["title"] = meta.get("title", "")
         hits_out.append(entry)
 
-    out: Dict[str, Any] = {"mode": mode if mode in {"semantic", "fulltext", "rag"} else "hybrid", "hits": hits_out}
+    out: Dict[str, Any] = {
+        "mode": mode if mode in {"semantic", "fulltext", "rag"} else "hybrid",
+        "hits": hits_out,
+        "timings": timings,
+    }
     if answer is not None:
         out["answer"] = answer
         out["used_llm"] = bool(used_llm)
@@ -257,6 +326,481 @@ async def api_search(payload: Dict[str, Any]):
             })
         out["references"] = refs
     return out
+
+
+@app.post("/api/image-search")
+async def api_image_search(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    payload: Dict[str, Any] = {}
+    reference_file: UploadFile | None = None
+    content_type = request.headers.get("content-type", "")
+
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        for key, value in form.multi_items():
+            if isinstance(value, UploadFile) and key == "reference":
+                reference_file = value
+            else:
+                payload[key] = value
+    else:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                payload = body
+        except Exception:
+            payload = {}
+
+    sid = payload.get("space_id")
+    sid = int(sid) if sid is not None else get_default_space_id(uid)
+    query = _extract_query_text(payload.get("query"))
+    tag_filter = _extract_tags(payload.get("tags"))
+    top_k = int(payload.get("top_k") or 12)
+    vector = _extract_vector(payload.get("vector"))
+
+    temp_file_path: str | None = None
+    try:
+        if reference_file is not None:
+            suffix = Path(reference_file.filename or "").suffix.lower() or ".img"
+            with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                data = await reference_file.read()
+                tmp.write(data)
+                temp_file_path = tmp.name
+            try:
+                vectors = embed_image_paths([temp_file_path])
+                vector = vectors[0] if vectors else None
+            except VisionModelUnavailable as e:
+                return JSONResponse(status_code=503, content={"error": "vision model unavailable", "detail": str(e)})
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": "failed to process reference image", "detail": str(e)})
+
+        if vector is None and query:
+            try:
+                vecs = embed_image_texts([query])
+                vector = vecs[0] if vecs else None
+            except VisionModelUnavailable as e:
+                return JSONResponse(status_code=503, content={"error": "vision model unavailable", "detail": str(e)})
+            except Exception:
+                vector = None
+
+        if vector is None and query:
+            logger.warning("Image search: semantic embedding unavailable, falling back to text-only search")
+    finally:
+        if temp_file_path:
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                pass
+
+    if vector is None and not query and not tag_filter:
+        return JSONResponse(status_code=400, content={"error": "provide query, tags, or vector"})
+
+    hits = image_search(query=query, vector=vector, top_k=top_k, user_id=uid, space_id=sid, tags=tag_filter)
+    results: List[Dict[str, Any]] = []
+    for idx, h in enumerate(hits, start=1):
+        src = h.get("_source", h)
+        results.append(
+            {
+                "rank": idx,
+                "doc_id": src.get("doc_id"),
+                "image_id": src.get("image_id"),
+                "thumbnail_path": src.get("thumbnail_path"),
+                "file_path": src.get("file_path"),
+                "caption": src.get("caption"),
+                "tags": src.get("tags", []),
+                "score": h.get("_score"),
+            }
+        )
+    doc_meta_map: Dict[int, Dict[str, Any]] = {}
+    doc_ids = sorted({int(r["doc_id"]) for r in results if r.get("doc_id")})
+    if doc_ids:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, COALESCE(metadata,'{}'::jsonb) FROM documents WHERE id = ANY(%s)",
+                    (doc_ids,),
+                )
+                doc_meta_map = {int(row[0]): (row[1] or {}) for row in cur.fetchall()}
+
+    for item in results:
+        doc_id = item.get("doc_id")
+        image_id = item.get("image_id")
+        meta = doc_meta_map.get(int(doc_id)) if doc_id else {}
+        item["thumbnail_url"] = f"/api/image-assets/{image_id}/thumbnail" if image_id else None
+        if isinstance(meta, dict):
+            item["thumbnail_object_url"] = meta.get("thumbnail_object_url")
+            item["object_url"] = meta.get("object_url")
+        else:
+            item["thumbnail_object_url"] = None
+            item["object_url"] = None
+        item["file_url"] = f"/api/doc-download?doc_id={doc_id}" if doc_id else None
+
+    return {"results": results, "count": len(results)}
+
+
+@app.get("/api/image-assets/{image_id}/thumbnail")
+async def api_image_thumbnail(request: Request, image_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ia.thumbnail_path, ia.document_id, d.user_id, COALESCE(d.metadata,'{}'::jsonb)
+                FROM image_assets ia
+                JOIN documents d ON d.id = ia.document_id
+                WHERE ia.id = %s
+                """,
+                (int(image_id),),
+            )
+            row = cur.fetchone()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    thumb_rel, _doc_id, owner_id, metadata = row
+    if int(owner_id) != uid:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    path = _resolve_asset_path(thumb_rel)
+    if path and path.exists():
+        media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+        return FileResponse(str(path), media_type=media_type)
+    meta = metadata or {}
+    if isinstance(meta, dict):
+        remote = meta.get("thumbnail_object_url")
+        if remote:
+            return RedirectResponse(remote, status_code=307)
+    return JSONResponse(status_code=404, content={"error": "thumbnail unavailable"})
+
+
+@app.get("/api/image-assets/{image_id}")
+async def api_image_asset(request: Request, image_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ia.file_path, ia.document_id, d.user_id, COALESCE(d.metadata,'{}'::jsonb)
+                FROM image_assets ia
+                JOIN documents d ON d.id = ia.document_id
+                WHERE ia.id = %s
+                """,
+                (int(image_id),),
+            )
+            row = cur.fetchone()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    file_rel, _doc_id, owner_id, metadata = row
+    if int(owner_id) != uid:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    path = _resolve_asset_path(file_rel)
+    if path and path.exists():
+        media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+        return FileResponse(str(path), media_type=media_type)
+    meta = metadata or {}
+    if isinstance(meta, dict):
+        remote = meta.get("object_url")
+        if remote:
+            return RedirectResponse(remote, status_code=307)
+    return JSONResponse(status_code=404, content={"error": "image unavailable"})
+
+
+@app.get("/api/doc-download")
+async def api_doc_download(request: Request, doc_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT source_path, metadata FROM documents WHERE id = %s AND user_id = %s", (int(doc_id), uid))
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse(status_code=404, content={"error": "document not found"})
+            path = row[0] or ""
+            metadata = row[1] or {}
+    p = Path(path)
+    if p.exists():
+        return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
+    object_url = metadata.get("object_url") if isinstance(metadata, dict) else None
+    if object_url:
+        return JSONResponse(status_code=302, content={"redirect": object_url}, headers={"Location": object_url})
+    return JSONResponse(status_code=404, content={"error": "file not found"})
+
+
+@app.get("/api/doc-thumbnail")
+async def api_doc_thumbnail(request: Request, doc_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata FROM documents WHERE id = %s AND user_id = %s",
+                (int(doc_id), uid),
+            )
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse(status_code=404, content={"error": "document not found"})
+            metadata = row[0] or {}
+    thumb_rel = metadata.get("thumbnail_path") if isinstance(metadata, dict) else None
+    if thumb_rel:
+        path = _resolve_asset_path(thumb_rel)
+        if path and path.exists():
+            media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+            return FileResponse(str(path), media_type=media_type)
+    if isinstance(metadata, dict):
+        remote = metadata.get("thumbnail_object_url")
+        if remote:
+            return RedirectResponse(remote, status_code=307)
+    return JSONResponse(status_code=404, content={"error": "thumbnail unavailable"})
+
+
+@app.get("/api/kb")
+async def api_kb(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    space_id: int | None = None,
+    sort: str = "newest",
+):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    items: List[Dict[str, Any]] = []
+    total = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            params: List[Any] = [uid]
+            space_clause = ""
+            if space_id is not None:
+                space_clause = "AND d.space_id = %s"
+                params.append(int(space_id))
+            cur.execute(
+                f"SELECT COUNT(*) FROM documents d WHERE d.user_id = %s {space_clause}",
+                params,
+            )
+            total = int(cur.fetchone()[0])
+            params.extend([int(limit), int(offset)])
+            order_clause = "d.created_at DESC"
+            sort_key = (sort or "").strip().lower()
+            if sort_key in {"oldest", "asc"}:
+                order_clause = "d.created_at ASC"
+            elif sort_key in {"az", "title", "alpha"}:
+                order_clause = "COALESCE(d.title, d.source_path) ASC"
+            elif sort_key in {"za", "title_desc", "alpha_desc"}:
+                order_clause = "COALESCE(d.title, d.source_path) DESC"
+
+            cur.execute(
+                f"""
+                SELECT d.id, d.source_path, d.source_type, COALESCE(d.title,''), d.created_at, COALESCE(d.metadata,'{{}}'::jsonb)
+                FROM documents d
+                WHERE d.user_id = %s {space_clause}
+                ORDER BY {order_clause}
+                LIMIT %s OFFSET %s
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+            doc_ids = [int(r[0]) for r in rows]
+            chunk_counts: Dict[int, int] = {}
+            image_map: Dict[int, List[Dict[str, Any]]] = {}
+            if doc_ids:
+                cur.execute(
+                    "SELECT document_id, count(*) FROM chunks WHERE document_id = ANY(%s) GROUP BY document_id",
+                    (doc_ids,),
+                )
+                chunk_counts = {int(r[0]): int(r[1]) for r in cur.fetchall()}
+                cur.execute(
+                    """
+                    SELECT document_id, id, thumbnail_path, file_path, width, height, caption, tags
+                    FROM image_assets
+                    WHERE document_id = ANY(%s)
+                    ORDER BY created_at DESC
+                    """,
+                    (doc_ids,),
+                )
+                for row in cur.fetchall():
+                    doc_key = int(row[0])
+                    image_map.setdefault(doc_key, []).append(
+                        {
+                            "image_id": int(row[1]),
+                            "thumbnail_path": row[2],
+                            "file_path": row[3],
+                            "width": row[4],
+                            "height": row[5],
+                            "caption": row[6],
+                            "tags": row[7] or [],
+                        }
+                    )
+            for r in rows:
+                sp = r[1] or ""
+                fn = sp.rsplit("/", 1)[-1] if sp else ""
+                doc_id = int(r[0])
+                metadata = r[5] or {}
+                doc_images: List[Dict[str, Any]] = []
+                if doc_id in image_map:
+                    for img in image_map[doc_id]:
+                        image_id = img.get("image_id")
+                        doc_images.append(
+                            {
+                                **img,
+                                "thumbnail_url": f"/api/image-assets/{image_id}/thumbnail" if image_id else None,
+                                "file_url": f"/api/doc-download?doc_id={doc_id}",
+                                "object_url": metadata.get("object_url") if isinstance(metadata, dict) else None,
+                                "thumbnail_object_url": metadata.get("thumbnail_object_url") if isinstance(metadata, dict) else None,
+                            }
+                        )
+                preview_url = doc_images[0].get("thumbnail_url") if doc_images else None
+                if not preview_url and isinstance(metadata, dict):
+                    preview_url = metadata.get("thumbnail_object_url")
+                items.append(
+                    {
+                        "id": doc_id,
+                        "file_name": fn,
+                        "source_path": sp,
+                        "source_type": r[2] or "",
+                        "title": r[3] or "",
+                        "created_at": (r[4].isoformat() if r[4] else None),
+                        "chunk_count": chunk_counts.get(doc_id, 0),
+                        "metadata": metadata,
+                        "images": doc_images,
+                        "thumbnail_preview_url": preview_url,
+                    }
+                )
+    return {"documents": items, "limit": int(limit), "offset": int(offset), "total": int(total)}
+
+
+@app.delete("/api/documents/{doc_id}")
+async def api_delete_document(request: Request, doc_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT source_path, metadata FROM documents WHERE id = %s AND user_id = %s",
+                (int(doc_id), uid),
+            )
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            source_path = row[0] or ""
+            metadata = row[1] or {}
+            cur.execute("DELETE FROM documents WHERE id = %s AND user_id = %s", (int(doc_id), uid))
+
+    # Best-effort cleanup of local assets (source file + thumbnails)
+    try:
+        if source_path:
+            src_path = Path(source_path)
+            if src_path.exists():
+                src_path.unlink()
+    except Exception:
+        logger.warning("Failed to delete source file for doc_id=%s", doc_id)
+
+    try:
+        thumb_rel = metadata.get("thumbnail_path") if isinstance(metadata, dict) else None
+        if thumb_rel:
+            thumb_path = _resolve_asset_path(thumb_rel)
+            if thumb_path and thumb_path.exists():
+                thumb_path.unlink()
+    except Exception:
+        logger.warning("Failed to delete thumbnail for doc_id=%s", doc_id)
+
+    return {"ok": True, "document_id": int(doc_id)}
+
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        return {"user": None}
+    uid = int(user.get("user_id") or user.get("id"))
+    return {"user": {"id": uid, "email": user.get("email")}, "spaces": list_spaces(uid)}
+
+
+@app.post("/api/register")
+async def api_register(payload: Dict[str, Any]):
+    if not settings.allow_registration:
+        return JSONResponse(status_code=403, content={"error": "registration disabled"})
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"error": "email and password required"})
+    try:
+        u = create_user(email, password)
+        token = sign_session({"user_id": u["id"], "email": email})
+        headers = set_session_cookie_headers(token)
+        spaces = list_spaces(u["id"]) or []
+        return JSONResponse(status_code=200, content={"user": {"id": u["id"], "email": email}, "spaces": spaces}, headers=headers)
+    except Exception as e:
+        msg = str(e) or ""
+        low = msg.lower()
+        if "duplicate" in low or "unique" in low:
+            return JSONResponse(status_code=409, content={"error": "email already registered"})
+        return JSONResponse(status_code=400, content={"error": msg})
+
+
+@app.post("/api/login")
+async def api_login(payload: Dict[str, Any]):
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"error": "email and password required"})
+    u = authenticate_user(email, password)
+    if not u:
+        return JSONResponse(status_code=401, content={"error": "invalid credentials"})
+    token = sign_session({"user_id": u["id"], "email": email})
+    headers = set_session_cookie_headers(token)
+    spaces = list_spaces(u["id"]) or []
+    return JSONResponse(status_code=200, content={"user": {"id": u["id"], "email": email}, "spaces": spaces}, headers=headers)
+
+
+@app.post("/api/logout")
+async def api_logout():
+    headers = clear_session_cookie_headers()
+    return JSONResponse(status_code=200, content={"ok": True}, headers=headers)
+
+
+@app.get("/api/spaces")
+async def api_spaces(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    return {"spaces": list_spaces(uid)}
+
+
+@app.post("/api/spaces")
+async def api_create_space(request: Request, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name required"})
+    sid = create_space(uid, name)
+    return {"space_id": sid}
+
+
+@app.post("/api/spaces/default")
+async def api_set_default_space(request: Request, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    sid = int(payload.get("space_id"))
+    set_default_space(uid, sid)
+    return {"ok": True}
 
 
 @app.post("/api/llm-test")
@@ -413,6 +957,98 @@ def llm_config():
         "config_file": settings.oci_config_file,
         "config_profile": settings.oci_config_profile,
     }
+
+
+def _extract_query_text(raw: Any) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, (list, tuple, set)):
+        parts: List[str] = []
+        for item in raw:
+            txt = _extract_query_text(item)
+            if txt:
+                parts.append(txt)
+        return " ".join(parts).strip()
+    return str(raw).strip()
+
+
+def _extract_tags(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            try:
+                loaded = json.loads(stripped)
+                if isinstance(loaded, list):
+                    return [str(t).strip() for t in loaded if str(t).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [p.strip() for p in stripped.split(",") if p.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return [str(raw).strip()]
+
+
+def _extract_vector(raw: Any) -> List[float] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        floats: List[float] = []
+        for v in raw:
+            try:
+                floats.append(float(v))
+            except (TypeError, ValueError):
+                return None
+        return floats
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return None
+        try:
+            loaded = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        return _extract_vector(loaded)
+    return None
+
+
+def _asset_candidate_bases() -> List[Path]:
+    bases = [Path(settings.upload_dir)]
+    tmp_dir = Path(settings.data_dir) / "tmp_uploads"
+    if tmp_dir != bases[0]:
+        bases.append(tmp_dir)
+    return bases
+
+
+def _resolve_asset_path(rel_path: Optional[str]) -> Optional[Path]:
+    if not rel_path:
+        return None
+    rel = str(rel_path).lstrip("/\\")
+    if not rel:
+        return None
+    for base in _asset_candidate_bases():
+        base_resolved = base.resolve()
+        candidate = (base_resolved / rel).resolve()
+        try:
+            candidate.relative_to(base_resolved)
+        except ValueError:
+            continue
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def get_current_user_sync(request: Request) -> Optional[dict]:
+    token = request.cookies.get(settings.session_cookie_name)
+    if not token:
+        return None
+    from .session import verify_session
+    return verify_session(token)
 
 
 def main():

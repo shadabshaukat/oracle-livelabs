@@ -9,6 +9,8 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .config import Settings, build_database_url, settings
+from .embeddings import get_text_embedding_dim
+from .vision_embeddings import get_image_embedding_dim, VisionModelUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,19 @@ def init_db(s: Settings = settings) -> None:
     Initialize database: create extensions, tables, and indexes if they do not exist.
     Uses settings.embedding_dim, pgvector metric/lists configuration, and FTS config.
     """
-    dim = s.embedding_dim
+    try:
+        dim = get_text_embedding_dim()
+    except Exception as exc:
+        logger.warning("Falling back to EMBEDDING_DIM=%s due to error: %s", s.embedding_dim, exc)
+        dim = s.embedding_dim
+    try:
+        image_dim = get_image_embedding_dim()
+    except VisionModelUnavailable as exc:
+        logger.warning("Vision model unavailable, using IMAGE_EMBED_DIM=%s (%s)", s.image_embed_dim, exc)
+        image_dim = s.image_embed_dim
+    except Exception as exc:
+        logger.warning("Falling back to IMAGE_EMBED_DIM=%s due to error: %s", s.image_embed_dim, exc)
+        image_dim = s.image_embed_dim
     metric = s.pgvector_metric.lower()
     if metric not in {"cosine", "l2", "ip"}:
         raise ValueError("PGVECTOR_METRIC must be one of: cosine, l2, ip")
@@ -63,13 +77,41 @@ def init_db(s: Settings = settings) -> None:
         with conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS citext")
 
         # Create tables
         with conn.cursor() as cur:
             cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    email CITEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    last_login_at TIMESTAMPTZ
+                );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS spaces (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    is_default BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    UNIQUE(user_id, name)
+                );
+                """
+            )
+
+            cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS documents (
                     id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
                     source_path TEXT,
                     source_type TEXT NOT NULL,
                     title TEXT,
@@ -78,6 +120,10 @@ def init_db(s: Settings = settings) -> None:
                 );
                 """
             )
+
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id BIGINT")
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS space_id BIGINT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_user_space ON documents(user_id, space_id, created_at DESC)")
 
             cur.execute(
                 f"""
@@ -115,7 +161,61 @@ def init_db(s: Settings = settings) -> None:
                 """
             )
 
-        logger.info("Database initialized with vector dim=%s, metric=%s, lists=%s", dim, metric, s.pgvector_lists)
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_activity (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    activity_type TEXT NOT NULL,
+                    details JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+            )
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_activity_user_time ON user_activity(user_id, created_at DESC)")
+
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS image_assets (
+                    id BIGSERIAL PRIMARY KEY,
+                    document_id BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+                    file_path TEXT,
+                    thumbnail_path TEXT,
+                    width INT,
+                    height INT,
+                    tags JSONB DEFAULT '[]'::jsonb,
+                    caption TEXT,
+                    embedding vector({image_dim}),
+                    embedding_model TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_image_assets_user_space ON image_assets(user_id, space_id, created_at DESC);
+                """
+            )
+
+            cur.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_image_assets_embedding_ivfflat
+                ON image_assets USING ivfflat (embedding {opclass})
+                WITH (lists = {s.pgvector_lists});
+                """
+            )
+
+        logger.info(
+            "Database initialized with text_dim=%s image_dim=%s metric=%s lists=%s",
+            dim,
+            image_dim,
+            metric,
+            s.pgvector_lists,
+        )
 
 
 def set_search_runtime(cur: psycopg.Cursor, probes: int):

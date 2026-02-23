@@ -43,9 +43,19 @@ class Settings:
     # Upload lifecycle
     delete_uploaded_after_ingest: bool = _get_bool("DELETE_UPLOADED_FILES", False)
 
+    # Auth/session
+    secret_key: str = os.getenv("SECRET_KEY", "change-me")
+    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "searchapp_session")
+    session_max_age_seconds: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "28800"))
+    cookie_samesite: str = os.getenv("COOKIE_SAMESITE", "Lax")
+    cookie_secure: bool = _get_bool("COOKIE_SECURE", False)
+    allow_registration: bool = _get_bool("ALLOW_REGISTRATION", True)
+
     # Chunking
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "2500"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "250"))
+    chunk_strategy: str = os.getenv("CHUNK_STRATEGY", "recursive").lower()
+    sentence_splitter: str = os.getenv("SENTENCE_SPLITTER", "nltk").lower()
 
     # Database (OCI PostgreSQL)
     database_url: Optional[str] = os.getenv("DATABASE_URL")
@@ -62,6 +72,25 @@ class Settings:
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "384"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH", "64"))
+
+    # Image search (OpenCLIP)
+    enable_image_storage: bool = _get_bool("ENABLE_IMAGE_STORAGE", True)
+    image_embed_model: str = os.getenv("IMAGE_EMBED_MODEL", "openclip/ViT-B-32")
+    image_embed_dim: int = int(os.getenv("IMAGE_EMBED_DIM", "512"))
+    image_embed_device: str = os.getenv("IMAGE_EMBED_DEVICE", "cpu")
+    image_search_text_weight: float = float(os.getenv("IMAGE_SEARCH_TEXT_WEIGHT", "0.45"))
+    image_search_vector_weight: float = float(os.getenv("IMAGE_SEARCH_VECTOR_WEIGHT", "0.55"))
+    image_keyword_max: int = int(os.getenv("IMAGE_KEYWORD_MAX", "24"))
+
+    # Image captioning (optional)
+    enable_image_captioning: bool = _get_bool("ENABLE_IMAGE_CAPTIONING", False)
+    image_caption_model: str = os.getenv("IMAGE_CAPTION_MODEL", "llava-hf/llava-1.5-7b-hf")
+    image_caption_model_small: str = os.getenv("IMAGE_CAPTION_MODEL_SMALL", "Salesforce/blip-image-captioning-base")
+    image_caption_use_small: bool = _get_bool("IMAGE_CAPTION_USE_SMALL", True)
+    image_caption_device: str = os.getenv("IMAGE_CAPTION_DEVICE", "cpu")
+    image_caption_max_tokens: int = int(os.getenv("IMAGE_CAPTION_MAX_TOKENS", "120"))
+    image_caption_prompt: str = os.getenv("IMAGE_CAPTION_PROMPT", "Describe the image in detail.")
+    image_caption_timeout_s: int = int(os.getenv("IMAGE_CAPTION_TIMEOUT_S", "60"))
 
     # pgvector index
     pgvector_metric: str = os.getenv("PGVECTOR_METRIC", "cosine")  # cosine|l2|ip

@@ -179,6 +179,12 @@ The compute instance is created in the public subnet by default. For private-onl
 - PostgreSQL admin password is provided or auto-generated and returned only as a sensitive output (no Vault).
 - Default Security List allows SSH from 0.0.0.0/0, but the private subnet prohibits public IPs, which prevents exposure by default. Lock down further as per your security requirements and consider NSGs tailored for the compute instance.
 
+## Integration Notes
+
+- The PostgreSQL DB System is the **primary persistent AI store** for the search app.
+- Ensure port 5432 is reachable from the app host (Compute VM or trusted network).
+- OCI GenAI is used only for inference; stored knowledge remains in PostgreSQL.
+
 ## CLI usage (optional)
 
 You can also run the stack with Terraform CLI:

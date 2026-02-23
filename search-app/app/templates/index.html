@@ -10,12 +10,71 @@
   <header class="topbar">
     <h2>Oracle Cloud / OCI Generative AI / PostgreSQL</h2>
     <div class="spacer"></div>
+    <select id="spaceSelect" class="ghost" hidden></select>
+    <button id="accountBtn" class="ghost" title="Account">👤</button>
     <button id="themeBtn" class="ghost" title="Toggle dark mode">🌓</button>
   </header>
 
   <main class="container">
-    <!-- Hero: Google-like minimalist landing -->
-    <section class="card card--wide hero">
+    <!-- Landing -->
+    <section class="card card--wide hero landing" id="landingSection">
+      <div class="logo" aria-label="SEARCH">
+        <span class="g g-blue">S</span>
+        <span class="g g-red">E</span>
+        <span class="g g-yellow">A</span>
+        <span class="g g-blue">R</span>
+        <span class="g g-green">C</span>
+        <span class="g g-red">H</span>
+      </div>
+      <p class="muted landing-subtitle">Notebook-style search and retrieval across your documents and images.</p>
+      <div class="row middle">
+        <button id="tryAppBtn" class="primary">Try Search App</button>
+      </div>
+    </section>
+
+    <!-- Account -->
+    <section class="card card--wide" id="accountSection" hidden>
+      <h2>Account</h2>
+      <div id="authPanel" class="row wrap">
+        <div class="auth-card">
+          <h3>Sign in</h3>
+          <label>Email</label>
+          <input id="loginEmail" type="email" placeholder="you@example.com" />
+          <label>Password</label>
+          <input id="loginPassword" type="password" placeholder="••••••••" />
+          <button id="loginBtn" class="primary">Login</button>
+          <p class="muted">New user? <a href="#" id="showRegisterLink">Create account</a></p>
+        </div>
+        <div class="auth-card" id="registerCard" hidden>
+          <h3>Create account</h3>
+          <label>Email</label>
+          <input id="regEmail" type="email" placeholder="you@example.com" />
+          <label>Password</label>
+          <input id="regPassword" type="password" placeholder="At least 8 characters" />
+          <button id="registerBtn">Register</button>
+          <p class="muted"><a href="#" id="cancelRegisterLink">Back to sign in</a></p>
+        </div>
+      </div>
+      <div id="accountPanel" class="row wrap" hidden>
+        <div>
+          <strong>Signed in as</strong>
+          <div id="userEmail" class="muted"></div>
+        </div>
+        <div class="row no-grow">
+          <label for="spacesSelect">Space</label>
+          <select id="spacesSelect"></select>
+          <button id="setDefaultSpaceBtn" class="ghost">Set default</button>
+        </div>
+        <div class="row no-grow">
+          <input id="newSpaceName" placeholder="New space" />
+          <button id="createSpaceBtn">Create</button>
+        </div>
+        <button id="logoutBtn" class="ghost">Logout</button>
+      </div>
+    </section>
+
+    <!-- App: Search -->
+    <section class="card card--wide hero" id="searchSection" hidden>
       <div class="logo" aria-label="SEARCH">
         <span class="g g-blue">S</span>
         <span class="g g-red">E</span>
@@ -25,16 +84,24 @@
         <span class="g g-red">H</span>
       </div>
 
-      <div class="searchbar">
-        <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" />
-        <div class="search-actions">
-          <button id="searchBtn" class="primary">Search</button>
-          <button id="settingsBtn" class="ghost" title="Settings" aria-expanded="false">⚙️</button>
+      <div class="row middle">
+        <div class="tabs">
+          <button id="searchModeText" class="tab active">Text Search</button>
+          <button id="searchModeImage" class="tab">Image Search</button>
         </div>
       </div>
 
+      <div class="searchbar">
+        <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" />
+      </div>
+
+      <div class="row middle search-actions-row">
+        <button id="searchBtn" class="primary">Search</button>
+        <button id="settingsBtn" class="ghost" title="Settings" aria-expanded="false">⚙️</button>
+      </div>
+
       <div id="settingsPanel" class="settings" hidden>
-        <div class="row wrap">
+        <div id="textSettings" class="row wrap">
           <div class="row no-grow">
             <label for="mode">Mode</label>
             <select id="mode">
@@ -55,6 +122,20 @@
             <input id="debounceMs" type="number" value="400" min="100" max="2000" />
           </div>
         </div>
+        <div id="imageSettings" class="row wrap" hidden>
+          <div class="row no-grow">
+            <label for="imageTags">Image tags</label>
+            <input id="imageTags" type="text" placeholder="policy, architecture" />
+          </div>
+          <div class="row no-grow">
+            <label for="imageTopK" class="leftpad">Top K</label>
+            <input id="imageTopK" type="number" value="12" min="1" max="50" />
+          </div>
+          <div class="row no-grow">
+            <label for="imageFile" class="leftpad">Reference image</label>
+            <input id="imageFile" type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" />
+          </div>
+        </div>
       </div>
 
       <div class="row middle">
@@ -64,38 +145,85 @@
         </div>
       </div>
 
-      <div class="row" id="answerRow" hidden>
-        <label>Answer / Context <span id="llmBadge" class="badge" style="display:none"></span></label>
-        <pre id="answer" class="panel"></pre>
-        <div id="refs" class="panel" style="margin-top:8px; display:none"></div>
+      <div class="row row--full" id="answerRow" hidden>
+        <label class="panel-title">LLM Response <span id="llmBadge" class="badge" style="display:none"></span><span id="llmTime" class="badge badge--time" style="display:none"></span></label>
+        <div id="answer" class="panel answer-panel"></div>
       </div>
-      <div class="row" id="resultsRow" hidden>
-        <label>Results</label>
-        <div id="results" class="results"></div>
+      <div class="row row--full" id="resultsRow" hidden>
+        <label class="panel-title">Search Matches <span id="resultsTime" class="badge badge--time" style="display:none"></span></label>
+        <div id="results" class="panel refs-panel" style="display:none"></div>
+      </div>
+      <div class="row row--full" id="refsRow" hidden>
+        <label class="panel-title">References</label>
+        <div id="refs" class="panel refs-panel" style="display:none"></div>
+      </div>
+      <div class="row row--full" id="imageResultsRow" hidden>
+        <label>Image Results</label>
+        <div id="imageResults" class="image-results"></div>
       </div>
     </section>
 
     <!-- Upload -->
-    <section class="card card--wide">
-      <h2>Upload</h2>
-      <div class="row wrap">
-        <button id="uploadBtn">Upload</button>
-        <div class="loader" id="uploadLoading" hidden>
-          <div class="spinner small"></div>
-          <span>Processing…</span>
+    <section class="card card--wide" id="uploadSection" hidden>
+      <div class="card-header collapsible" id="uploadToggle" role="button" tabindex="0" aria-expanded="false">
+        <h2>Upload</h2>
+        <span class="chevron">▾</span>
+      </div>
+      <div id="uploadBody" hidden>
+        <p class="muted">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</p>
+        <div class="row wrap">
+          <button id="uploadBtn">Upload</button>
+          <div class="loader" id="uploadLoading" hidden>
+            <div class="spinner small"></div>
+            <span>Processing…</span>
+          </div>
+        </div>
+        <div class="row">
+          <div id="dropzone" class="dropzone">Drag & drop files here</div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label class="muted small" for="files"></label>
+            <input id="files" type="file" multiple accept=".pdf,.docx,.doc,.txt,.html,.htm,.md,.csv,.json,.xml,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.bmp" />
+          </div>
+        </div>
+        <p class="muted small">Tip: drag & drop files or folders, or use the picker.</p>
+        <div class="row" id="uploadListRow" hidden>
+          <div id="uploadList" class="progress-list"></div>
+        </div>
+        <div class="row" id="uploadStatusRow" hidden>
+          <div id="uploadStatus" class="panel"></div>
         </div>
       </div>
-      <div class="row">
-        <div id="dropzone" class="dropzone">Drag & drop files here</div>
+    </section>
+
+    <!-- Library -->
+    <section class="card card--wide" id="librarySection" hidden>
+      <div class="card-header collapsible" id="libraryToggle" role="button" tabindex="0" aria-expanded="false">
+        <h2>Library</h2>
+        <span class="chevron">▾</span>
       </div>
-      <div class="row">
-        <input id="files" type="file" multiple webkitdirectory directory />
-      </div>
-      <div class="row" id="uploadListRow" hidden>
-        <div id="uploadList" class="progress-list"></div>
-      </div>
-      <div class="row" id="uploadStatusRow" hidden>
-        <pre id="uploadStatus" class="panel"></pre>
+      <div id="libraryBody" hidden>
+        <div class="row wrap">
+          <button id="libraryRefreshBtn" class="ghost">Refresh</button>
+          <button id="librarySelectAllBtn" class="ghost">Select all</button>
+          <button id="libraryClearSelectionBtn" class="ghost" hidden>Clear selection</button>
+          <button id="libraryDeleteSelectedBtn" class="ghost danger" disabled>Delete selected</button>
+          <span id="librarySelectionCount" class="muted">0 selected</span>
+          <span class="leftpad muted">View</span>
+          <div class="view-toggle" role="group" aria-label="Library view">
+            <button id="libraryViewGrid" class="icon-btn active" title="Grid view" aria-pressed="true">▦</button>
+            <button id="libraryViewList" class="icon-btn" title="List view" aria-pressed="false">≡</button>
+          </div>
+          <label for="librarySort" class="leftpad">Sort</label>
+          <select id="librarySort">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="az">A → Z</option>
+            <option value="za">Z → A</option>
+          </select>
+        </div>
+        <div id="libraryList" class="library-grid"></div>
       </div>
     </section>
   </main>
@@ -151,6 +279,66 @@
       }
     }
 
+    function fileTypeIcon(fileName, sourceType) {
+      const name = (fileName || '').toLowerCase();
+      const ext = name.includes('.') ? name.split('.').pop() : '';
+      const type = (sourceType || ext || '').toLowerCase();
+      const styled = {
+        pdf: { label: 'PDF', className: 'pdf' },
+        docx: { label: 'W', className: 'word' },
+        doc: { label: 'W', className: 'word' },
+        pptx: { label: 'P', className: 'powerpoint' },
+        ppt: { label: 'P', className: 'powerpoint' },
+        xlsx: { label: 'X', className: 'excel' },
+        xls: { label: 'X', className: 'excel' },
+      };
+      if (styled[type]) {
+        const icon = styled[type];
+        return `<span class="file-icon file-icon--${icon.className}"><span class="file-icon__label">${icon.label}</span></span>`;
+      }
+      const emojiMap = {
+        txt: '📝',
+        html: '🌐',
+        htm: '🌐',
+        md: '🧾',
+        csv: '📊',
+        json: '🧩',
+        xml: '🧷',
+        png: '🖼️',
+        jpg: '🖼️',
+        jpeg: '🖼️',
+        gif: '🖼️',
+        webp: '🖼️',
+        bmp: '🖼️'
+      };
+      return `<span class="file-emoji">${emojiMap[type] || '📄'}</span>`;
+    }
+
+    function formatAnswer(answerText) {
+      const text = answerText || '';
+      const parts = [];
+      const regex = /```(?:\w+)?\n([\s\S]*?)```/g;
+      let lastIndex = 0;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const before = text.slice(lastIndex, match.index);
+        if (before.trim()) {
+          parts.push(`<div class="answer-text">${escapeHtml(before).replace(/\n/g, '<br/>')}</div>`);
+        }
+        const code = match[1] || '';
+        parts.push(`<pre class="code-block"><code>${escapeHtml(code)}</code></pre>`);
+        lastIndex = regex.lastIndex;
+      }
+      const tail = text.slice(lastIndex);
+      if (tail.trim()) {
+        parts.push(`<div class="answer-text">${escapeHtml(tail).replace(/\n/g, '<br/>')}</div>`);
+      }
+      if (!parts.length) {
+        return `<div class="answer-text">${escapeHtml(text).replace(/\n/g, '<br/>')}</div>`;
+      }
+      return parts.join('');
+    }
+
     async function api(path, opts={}) {
       const res = await fetch(path, {
         method: opts.method || 'GET',
@@ -168,31 +356,82 @@
       wrap.innerHTML = '';
       if (!hits || !hits.length) {
         row.hidden = false;
+        wrap.style.display = 'block';
         wrap.textContent = 'No results';
         return;
       }
-      for (const h of hits) {
-        const div = document.createElement('div');
-        div.className = 'hit';
+      const items = hits.map((h, idx) => {
         const title = h.title ? escapeHtml(h.title) : '';
-        const source = h.source_path ? escapeHtml(h.source_path) : '';
+        const source = h.file_name ? escapeHtml(h.file_name) : '';
+        const summaryTitle = source || title || '(untitled)';
         const distance = (h.distance !== null && h.distance !== undefined) ? `distance: ${h.distance.toFixed ? h.distance.toFixed(4) : h.distance}` : '';
         const rank = (h.rank !== null && h.rank !== undefined) ? `rank: ${h.rank.toFixed ? h.rank.toFixed(4) : h.rank}` : '';
-        div.innerHTML = `
-          <div class="hit-head">
-            <div class="hit-title">${title || '(untitled)'}</div>
-            <div class="hit-badges">${distance ? `<span class="badge">${distance}</span>` : ''}${rank ? `<span class="badge">${rank}</span>` : ''}</div>
-          </div>
-          <div class="hit-meta">${source}</div>
-          <div class="hit-content">${highlight(h.content || '', query)}</div>
-        `;
-        wrap.appendChild(div);
-      }
+        const badges = `${distance ? `<span class="badge">${distance}</span>` : ''}${rank ? `<span class="badge">${rank}</span>` : ''}`;
+        const metaLine = [source, badges].filter(Boolean).join(' ');
+        const summaryBadges = `${distance ? `<span class="badge">${distance}</span>` : ''}`;
+        return `<details class="ref-item">
+          <summary>[${idx + 1}] ${summaryTitle}${summaryBadges ? ` ${summaryBadges}` : ''}</summary>
+          <div class="ref-snippet">${metaLine ? `<div class="result-meta">${metaLine}</div>` : ''}${highlight(h.content || '', query)}</div>
+        </details>`;
+      }).join('');
+      wrap.style.display = 'block';
+      wrap.innerHTML = items;
       row.hidden = false;
+    }
+
+    function setTimingBadge(id, ms) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (ms == null) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.textContent = `${ms} ms`;
+      el.style.display = 'inline-block';
+    }
+
+    function clearTextResults() {
+      const ans = document.getElementById('answer');
+      const answerRow = document.getElementById('answerRow');
+      const refsEl = document.getElementById('refs');
+      const refsRow = document.getElementById('refsRow');
+      const results = document.getElementById('results');
+      const resultsRow = document.getElementById('resultsRow');
+      const badge = document.getElementById('llmBadge');
+      if (ans) ans.innerHTML = '';
+      if (answerRow) answerRow.hidden = true;
+      if (refsEl) {
+        refsEl.innerHTML = '';
+        refsEl.style.display = 'none';
+      }
+      if (refsRow) refsRow.hidden = true;
+      if (results) {
+        results.innerHTML = '';
+        results.style.display = 'none';
+      }
+      if (resultsRow) resultsRow.hidden = true;
+      if (badge) badge.style.display = 'none';
+      setTimingBadge('llmTime', null);
+      setTimingBadge('resultsTime', null);
+    }
+
+    function clearImageResults() {
+      const imageResults = document.getElementById('imageResults');
+      const imageRow = document.getElementById('imageResultsRow');
+      if (imageResults) imageResults.innerHTML = '';
+      if (imageRow) imageRow.hidden = true;
     }
 
     let currentSearchController = null;
     let searchTimer = null;
+    let searchMode = 'text';
+    let state = { user: null, spaces: [], spaceId: null };
+
+    let librarySort = 'newest';
+    let libraryView = 'grid';
+    let libraryDocs = [];
+    const selectedDocs = new Set();
 
     async function doSearch() {
       const query = document.getElementById('query').value.trim();
@@ -203,7 +442,7 @@
       const loading = document.getElementById('searchLoading');
       const btn = document.getElementById('searchBtn');
 
-      if (!query) { ans.textContent = ''; renderResults([], ''); return; }
+      if (!query) { clearTextResults(); return; }
 
       if (currentSearchController) currentSearchController.abort();
       const ctrl = new AbortController();
@@ -211,12 +450,16 @@
 
       loading.hidden = false;
       btn.disabled = true;
-      ans.textContent = '';
+      ans.innerHTML = '';
+      setTimingBadge('llmTime', null);
+      setTimingBadge('resultsTime', null);
+      const startedAt = performance.now();
 
       try {
-        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk }, signal: ctrl.signal });
+        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk, space_id: state.spaceId }, signal: ctrl.signal });
+        const timings = data.timings || {};
         if (data.answer) {
-          ans.textContent = data.answer;
+          ans.innerHTML = formatAnswer(data.answer);
           answerRow.hidden = false;
           const badge = document.getElementById('llmBadge');
           if (badge) {
@@ -228,32 +471,40 @@
               badge.style.display = 'inline-block';
             }
           }
+          const llmMs = timings.llm_ms;
+          setTimingBadge('llmTime', llmMs);
           // Render references if provided
           const refsEl = document.getElementById('refs');
+          const refsRow = document.getElementById('refsRow');
           if (refsEl) {
             if (Array.isArray(data.references) && data.references.length) {
               refsEl.style.display = 'block';
               const items = data.references.map((r, idx) => {
                 const fn = r.file_name || '';
-                const ft = r.file_type || '';
                 // Prefer link to Object Storage when available
                 const label = r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${escapeHtml(fn || r.url)}</a>` : escapeHtml(fn);
                 // Find matching hit for chunk text (by chunk_id)
                 const match = data.hits.find(h => h.chunk_id === r.chunk_id);
                 const txt = match ? escapeHtml(match.content) : '';
-                return `<details>
-                  <summary>[${idx+1}] Source: ${label}${ft ? ` (${escapeHtml(ft)})` : ''}</summary>
-                  <p>${txt}</p>
+                return `<details class="ref-item">
+                  <summary>[${idx+1}] Source: ${label}</summary>
+                  <div class="ref-snippet">${txt}</div>
                 </details>`;
               }).join('');
-              refsEl.innerHTML = `<strong>References</strong>\n${items}`;
+              refsEl.innerHTML = items;
+              if (refsRow) refsRow.hidden = false;
             } else {
               refsEl.style.display = 'none';
               refsEl.innerHTML = '';
+              if (refsRow) refsRow.hidden = true;
             }
           }
         }
         renderResults(data.hits, query);
+        if (data.hits && data.hits.length) {
+          const dbMs = timings.db_ms;
+          setTimingBadge('resultsTime', dbMs);
+        }
       } catch (e) {
         if (e.name !== 'AbortError') {
           showToast('Search failed');
@@ -269,31 +520,63 @@
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       const q = document.getElementById('query');
-      if (e.key === 'Enter' && document.activeElement === q) {
+      const tags = document.getElementById('imageTags');
+      const active = document.activeElement;
+      if (e.key === 'Enter' && (active === q || active === tags)) {
         e.preventDefault();
-        doSearch();
+        if (searchMode === 'image') {
+          doImageSearch();
+        } else {
+          doSearch();
+        }
       } else if (e.key === 'Escape') {
         q.value = '';
-        document.getElementById('answer').textContent = '';
-        document.getElementById('answerRow').hidden = true;
-        const res = document.getElementById('results');
-        res.innerHTML = '';
-        document.getElementById('resultsRow').hidden = true;
+        clearTextResults();
       }
     });
 
-    document.getElementById('searchBtn').addEventListener('click', () => doSearch());
+    document.getElementById('searchModeText').addEventListener('click', () => {
+      searchMode = 'text';
+      document.getElementById('searchModeText').classList.add('active');
+      document.getElementById('searchModeImage').classList.remove('active');
+      document.getElementById('imageSettings').hidden = true;
+      document.getElementById('textSettings').hidden = false;
+      clearImageResults();
+      clearTextResults();
+      document.getElementById('imageResultsRow').hidden = true;
+    });
+
+    document.getElementById('searchModeImage').addEventListener('click', () => {
+      searchMode = 'image';
+      document.getElementById('searchModeImage').classList.add('active');
+      document.getElementById('searchModeText').classList.remove('active');
+      document.getElementById('imageSettings').hidden = false;
+      document.getElementById('textSettings').hidden = true;
+      clearTextResults();
+      clearImageResults();
+      document.getElementById('resultsRow').hidden = true;
+      document.getElementById('answerRow').hidden = true;
+    });
+
+    document.getElementById('searchBtn').addEventListener('click', () => {
+      if (searchMode === 'image') {
+        doImageSearch();
+      } else {
+        doSearch();
+      }
+    });
 
     document.getElementById('query').addEventListener('input', () => {
       const auto = document.getElementById('autoSearch')?.checked ?? false;
       const delay = parseInt(document.getElementById('debounceMs')?.value || '400', 10);
-      if (auto) {
+      if (auto && searchMode === 'text') {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => doSearch().catch(console.error), delay);
       }
     });
 
     document.getElementById('mode').addEventListener('change', () => {
+      clearTextResults();
       if (document.getElementById('autoSearch').checked) doSearch();
     });
     document.getElementById('topk').addEventListener('change', () => {
@@ -366,14 +649,16 @@
     });
 
     // Update dropzone text when browsing files
-    const filesInputEl = document.getElementById('files');
-    if (filesInputEl) {
-      filesInputEl.addEventListener('change', () => {
-        const count = filesInputEl.files ? filesInputEl.files.length : 0;
+    function bindFileInput(el) {
+      if (!el) return;
+      el.addEventListener('change', () => {
+        const count = el.files ? el.files.length : 0;
         const dz = document.getElementById('dropzone');
         if (dz) dz.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
       });
     }
+    const filesInputEl = document.getElementById('files');
+    bindFileInput(filesInputEl);
 
     const readyBtn = document.getElementById('readyBtn');
     if (readyBtn) {
@@ -406,6 +691,8 @@
       if (!allFiles.length) { showToast('No files selected'); return; }
 
       list.innerHTML = '';
+      list.classList.toggle('library-list', libraryView === 'list');
+      list.classList.toggle('library-grid', libraryView !== 'list');
       listRow.hidden = false;
       statusRow.hidden = false;
       const entries = new Map();
@@ -413,8 +700,12 @@
         const item = document.createElement('div');
         item.className = 'progress-item';
         item.innerHTML = `
-          <div class="progress-row"><span>${escapeHtml(f.webkitRelativePath || f.name)}</span><span class="pct">0%</span></div>
+          <div class="progress-row">
+            <span>${escapeHtml(f.webkitRelativePath || f.name)}</span>
+            <span class="stage">Queued</span>
+          </div>
           <div class="progress"><div class="progress-bar"></div></div>
+          <div class="progress-meta"><span class="icon">⏳</span><span class="message">Waiting to upload</span></div>
         `;
         list.appendChild(item);
         entries.set(f, item);
@@ -429,7 +720,9 @@
         return new Promise((resolve) => {
           const item = entries.get(file);
           const bar = item.querySelector('.progress-bar');
-          const pctLabel = item.querySelector('.pct');
+          const stage = item.querySelector('.stage');
+          const icon = item.querySelector('.icon');
+          const message = item.querySelector('.message');
           const xhr = new XMLHttpRequest();
           xhr.open('POST', '/api/upload');
 
@@ -437,25 +730,35 @@
             if (e.lengthComputable) {
               const pct = Math.round((e.loaded / e.total) * 100);
               bar.style.width = pct + '%';
-              pctLabel.textContent = pct + '%';
+              stage.textContent = `Uploading ${pct}%`;
+              icon.textContent = '⬆️';
+              message.textContent = 'Uploading file';
             } else {
               // Fallback when total length is unknown: show animated bar and ellipsis
               bar.style.width = '50%';
-              pctLabel.textContent = '…';
+              stage.textContent = 'Uploading…';
+              icon.textContent = '⬆️';
+              message.textContent = 'Uploading file';
             }
           };
           // When upload phase finishes, show processing state until the server responds
           xhr.upload.onload = () => {
-            pctLabel.textContent = 'processing…';
+            stage.textContent = 'Captioning…';
+            icon.textContent = '📝';
+            message.textContent = 'Generating image caption';
           };
 
           xhr.onerror = () => {
             if (attempt < maxRetries) {
               const delay = backoff(attempt);
-              pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+              stage.textContent = `Retrying (${attempt}/${maxRetries})…`;
+              icon.textContent = '🔁';
+              message.textContent = 'Retrying upload';
               setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
             } else {
-              pctLabel.textContent = 'failed';
+              stage.textContent = 'Failed';
+              icon.textContent = '❌';
+              message.textContent = 'Network error';
               resolve({ file, ok: false, error: 'network error' });
             }
           };
@@ -466,7 +769,10 @@
                 try {
                   const data = JSON.parse(xhr.responseText);
                   bar.style.width = '100%';
-                  pctLabel.textContent = '100%';
+                  stage.textContent = 'Complete';
+                  item.classList.add('progress-item--success');
+                  icon.textContent = '✅';
+                  message.textContent = 'Embeddings + captions written';
                   // Show per-file summary if available from server
                   try {
                     const res = Array.isArray(data.results) ? data.results[0] : data;
@@ -476,27 +782,36 @@
                       const msg = [];
                       if (docId != null) msg.push(`doc ${docId}`);
                       if (chunks != null) msg.push(`${chunks} chunks`);
-                      const row = item.querySelector('.progress-row span');
-                      if (row && msg.length) row.textContent = `${row.textContent} — processed (${msg.join(', ')})`;
+                      if (message && msg.length) message.textContent = `Processed (${msg.join(', ')})`;
                     }
                   } catch {}
                   resolve({ file, ok: true, data });
                 } catch (e) {
                   if (attempt < maxRetries) {
                     const delay = backoff(attempt);
-                    pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+                    stage.textContent = `Retrying (${attempt}/${maxRetries})…`;
+                    icon.textContent = '🔁';
+                    message.textContent = 'Retrying upload';
                     setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
                   } else {
-                    pctLabel.textContent = 'failed';
+                    stage.textContent = 'Failed';
+                    item.classList.add('progress-item--error');
+                    icon.textContent = '❌';
+                    message.textContent = 'Response parse error';
                     resolve({ file, ok: false, error: 'parse error' });
                   }
                 }
               } else if (xhr.status >= 500 && attempt < maxRetries) {
                 const delay = backoff(attempt);
-                pctLabel.textContent = `retrying (${attempt}/${maxRetries})…`;
+                stage.textContent = `Retrying (${attempt}/${maxRetries})…`;
+                icon.textContent = '🔁';
+                message.textContent = 'Server error, retrying';
                 setTimeout(() => resolve(uploadOne(file, attempt + 1)), delay);
               } else {
-                pctLabel.textContent = 'failed';
+                stage.textContent = 'Failed';
+                item.classList.add('progress-item--error');
+                icon.textContent = '❌';
+                message.textContent = xhr.responseText || `HTTP ${xhr.status}`;
                 resolve({ file, ok: false, error: xhr.responseText || `HTTP ${xhr.status}` });
               }
             }
@@ -504,6 +819,7 @@
 
           const form = new FormData();
           form.append('files', file);
+          if (state.spaceId) form.append('space_id', String(state.spaceId));
           xhr.send(form);
         });
       }
@@ -525,18 +841,388 @@
         }
         if (!queue.length && !inFlight.size) {
           loading.hidden = true;
-          try {
-            status.textContent = JSON.stringify(results.map(r => ({ file: r.file.webkitRelativePath || r.file.name, ok: r.ok, error: r.error || null })), null, 2);
-            showToast('Upload finished');
-          } catch (e) {
-            status.textContent = 'Upload finished (see progress list)';
-          }
+          statusRow.hidden = true;
+          status.textContent = '';
+          showToast('Upload + processing finished');
           // Clear dropped files after run
           droppedFiles = [];
         }
       }
 
       pump();
+    });
+
+    async function doImageSearch() {
+      const imageResults = document.getElementById('imageResults');
+      const imageRow = document.getElementById('imageResultsRow');
+      const query = document.getElementById('query').value.trim();
+      const tags = document.getElementById('imageTags').value.trim();
+      const topk = parseInt(document.getElementById('imageTopK').value || '12', 10);
+      const file = document.getElementById('imageFile').files[0];
+      if (!query && !tags && !file) { showToast('Add a query, tags, or image'); return; }
+      let body;
+      if (file) {
+        body = new FormData();
+        body.append('reference', file);
+        body.append('query', query);
+        if (tags) body.append('tags', tags);
+        body.append('top_k', topk);
+        if (state.spaceId) body.append('space_id', state.spaceId);
+      } else {
+        body = { query, tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [], top_k: topk, space_id: state.spaceId };
+      }
+      try {
+        const data = await api('/api/image-search', { method: 'POST', body });
+        imageResults.innerHTML = '';
+        if (!data.results || !data.results.length) {
+          imageRow.hidden = false;
+          imageResults.textContent = 'No image results';
+          return;
+        }
+        data.results.forEach(r => {
+          const card = document.createElement('div');
+          card.className = 'image-card';
+          const thumb = r.thumbnail_url
+            || (r.image_id ? `/api/image-assets/${r.image_id}/thumbnail` : '')
+            || r.thumbnail_object_url
+            || r.thumbnail_path
+            || '';
+          const tagList = Array.isArray(r.tags) ? r.tags.join(', ') : '';
+          const score = (r.score !== null && r.score !== undefined) ? `score: ${Number(r.score).toFixed(3)}` : '';
+          card.innerHTML = `
+            <div class="image-thumb">${thumb ? `<img src="${thumb}" alt="thumb" loading="lazy" />` : '<div class="image-thumb__empty">No preview</div>'}</div>
+            <div class="image-caption">${escapeHtml(r.caption || 'Image')}</div>
+            <div class="image-meta">${escapeHtml(tagList)}${score ? ` · ${score}` : ''}</div>
+          `;
+          imageResults.appendChild(card);
+        });
+        imageRow.hidden = false;
+      } catch (e) {
+        showToast('Image search failed');
+      }
+    }
+
+    async function initUser() {
+      try {
+        const me = await api('/api/me');
+        state.user = me.user || null;
+        state.spaces = me.spaces || [];
+        const def = state.spaces.find(s => s.is_default);
+        state.spaceId = def ? def.id : (state.spaces[0] ? state.spaces[0].id : null);
+      } catch {
+        state.user = null;
+        state.spaces = [];
+        state.spaceId = null;
+      }
+      renderAccount();
+      renderSpaces();
+    }
+
+    function renderAccount() {
+      const authPanel = document.getElementById('authPanel');
+      const accountPanel = document.getElementById('accountPanel');
+      const accountSection = document.getElementById('accountSection');
+      const library = document.getElementById('librarySection');
+      const landing = document.getElementById('landingSection');
+      const search = document.getElementById('searchSection');
+      const upload = document.getElementById('uploadSection');
+      if (state.user) {
+        authPanel.hidden = true;
+        accountPanel.hidden = false;
+        if (accountSection) accountSection.hidden = true;
+        library.hidden = false;
+        landing.hidden = true;
+        search.hidden = false;
+        upload.hidden = false;
+        document.getElementById('userEmail').textContent = state.user.email || '';
+      } else {
+        authPanel.hidden = false;
+        accountPanel.hidden = true;
+        if (accountSection) accountSection.hidden = true;
+        library.hidden = true;
+        landing.hidden = false;
+        search.hidden = true;
+        upload.hidden = true;
+      }
+    }
+
+    function renderSpaces() {
+      const sel = document.getElementById('spacesSelect');
+      const topSel = document.getElementById('spaceSelect');
+      sel.innerHTML = '';
+      topSel.innerHTML = '';
+      if (!state.spaces.length) {
+        topSel.hidden = true;
+        return;
+      }
+      state.spaces.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id; opt.textContent = s.name + (s.is_default ? ' (default)' : '');
+        sel.appendChild(opt);
+        const opt2 = document.createElement('option');
+        opt2.value = s.id; opt2.textContent = s.name;
+        topSel.appendChild(opt2);
+      });
+      sel.value = state.spaceId || '';
+      topSel.value = state.spaceId || '';
+      topSel.hidden = false;
+      loadLibrary();
+    }
+
+    async function deleteLibraryItem(docId, title) {
+      if (!docId) return;
+      const ok = confirm(`Delete ${title || 'this document'}? This cannot be undone.`);
+      if (!ok) return;
+      try {
+        await api(`/api/documents/${docId}`, { method: 'DELETE' });
+        showToast('Deleted');
+        loadLibrary();
+      } catch {
+        showToast('Delete failed');
+      }
+    }
+
+    function updateLibrarySelectionUI() {
+      const count = selectedDocs.size;
+      const countEl = document.getElementById('librarySelectionCount');
+      const clearBtn = document.getElementById('libraryClearSelectionBtn');
+      const delBtn = document.getElementById('libraryDeleteSelectedBtn');
+      if (countEl) countEl.textContent = `${count} selected`;
+      if (clearBtn) clearBtn.hidden = count === 0;
+      if (delBtn) delBtn.disabled = count === 0;
+    }
+
+    function syncLibraryCheckboxes() {
+      document.querySelectorAll('[data-doc-select]')
+        .forEach((el) => {
+          const id = parseInt(el.getAttribute('data-doc-select'), 10);
+          el.checked = selectedDocs.has(id);
+        });
+    }
+
+    async function loadLibrary() {
+      if (!state.user) return;
+      const list = document.getElementById('libraryList');
+      list.innerHTML = '';
+      list.classList.toggle('library-list', libraryView === 'list');
+      list.classList.toggle('library-grid', libraryView !== 'list');
+      try {
+        const data = await api(`/api/kb?space_id=${state.spaceId || ''}&sort=${encodeURIComponent(librarySort)}`);
+        if (!data.documents || !data.documents.length) {
+          list.textContent = 'No documents yet.';
+          return;
+        }
+        libraryDocs = data.documents;
+        const availableIds = new Set(libraryDocs.map(doc => doc.id));
+        Array.from(selectedDocs).forEach(id => {
+          if (!availableIds.has(id)) selectedDocs.delete(id);
+        });
+        data.documents.forEach(doc => {
+          const div = document.createElement('div');
+          div.className = libraryView === 'list' ? 'file-card file-card--list' : 'file-card';
+          const title = doc.title || doc.file_name || 'Document';
+          const fileName = doc.file_name || title;
+          const lower = (fileName || '').toLowerCase();
+          const isImage = /(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.bmp)$/i.test(lower);
+          const icon = fileTypeIcon(fileName, doc.source_type);
+          const thumb = doc.thumbnail_preview_url || (isImage ? `/api/doc-thumbnail?doc_id=${doc.id}` : '');
+          const meta = doc.source_type || (isImage ? 'image' : 'document');
+          const caption = doc?.metadata?.image_caption || '';
+          const metaLine = `${escapeHtml(meta)} · ${doc.chunk_count} chunks`;
+          const checkbox = `
+            <label class="file-select" title="Select ${escapeHtml(title)}">
+              <input type="checkbox" data-doc-select="${doc.id}" />
+            </label>
+          `;
+          if (libraryView === 'list') {
+            const listThumb = isImage && thumb
+              ? `<div class="file-icon-slot file-icon-slot--thumb"><img src="${thumb}" alt="${escapeHtml(fileName)}" /></div>`
+              : `<div class="file-icon-slot">${icon}</div>`;
+            div.innerHTML = `
+              ${checkbox}
+              ${listThumb}
+              <div class="file-details">
+                <div class="file-name" title="${escapeHtml(fileName)}">${escapeHtml(title)}</div>
+                <div class="file-meta">${metaLine}</div>
+                ${isImage && caption ? `<div class="file-caption">${escapeHtml(caption)}</div>` : ''}
+              </div>
+              <div class="file-actions">
+                <a href="/api/doc-download?doc_id=${doc.id}" target="_blank" rel="noopener">Download</a>
+                <button class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
+              </div>
+            `;
+          } else {
+            div.innerHTML = `
+              ${checkbox}
+              <div class="file-thumb">${thumb ? `<img src="${thumb}" alt="${escapeHtml(fileName)}" />` : `<span class="file-icon-slot">${icon}</span>`}</div>
+              <div class="file-name" title="${escapeHtml(fileName)}">${escapeHtml(title)}</div>
+              <div class="file-meta">${metaLine}</div>
+              ${isImage && caption ? `<div class="file-caption">${escapeHtml(caption)}</div>` : ''}
+              <div class="file-actions">
+                <a href="/api/doc-download?doc_id=${doc.id}" target="_blank" rel="noopener">Download</a>
+                <button class="link-btn" data-doc-id="${doc.id}" data-doc-title="${escapeHtml(title)}">Delete</button>
+              </div>
+            `;
+          }
+          const delBtn = div.querySelector('.link-btn');
+          delBtn.addEventListener('click', () => deleteLibraryItem(doc.id, title));
+          const checkboxEl = div.querySelector('[data-doc-select]');
+          checkboxEl.checked = selectedDocs.has(doc.id);
+          checkboxEl.addEventListener('change', (e) => {
+            if (e.target.checked) {
+              selectedDocs.add(doc.id);
+            } else {
+              selectedDocs.delete(doc.id);
+            }
+            updateLibrarySelectionUI();
+          });
+          list.appendChild(div);
+        });
+        updateLibrarySelectionUI();
+      } catch {
+        list.textContent = 'Failed to load library.';
+      }
+    }
+
+    document.getElementById('libraryRefreshBtn').addEventListener('click', loadLibrary);
+    document.getElementById('librarySelectAllBtn').addEventListener('click', () => {
+      if (!libraryDocs.length) return;
+      libraryDocs.forEach(doc => selectedDocs.add(doc.id));
+      syncLibraryCheckboxes();
+      updateLibrarySelectionUI();
+    });
+    document.getElementById('libraryClearSelectionBtn').addEventListener('click', () => {
+      selectedDocs.clear();
+      syncLibraryCheckboxes();
+      updateLibrarySelectionUI();
+    });
+    document.getElementById('libraryDeleteSelectedBtn').addEventListener('click', async () => {
+      if (!selectedDocs.size) return;
+      const ok = confirm(`Delete ${selectedDocs.size} document(s)? This cannot be undone.`);
+      if (!ok) return;
+      const ids = Array.from(selectedDocs);
+      let failures = 0;
+      for (const id of ids) {
+        try {
+          await api(`/api/documents/${id}`, { method: 'DELETE' });
+        } catch {
+          failures += 1;
+        }
+      }
+      selectedDocs.clear();
+      updateLibrarySelectionUI();
+      if (failures) {
+        showToast(`Deleted ${ids.length - failures}. ${failures} failed.`);
+      } else {
+        showToast('Deleted selected documents');
+      }
+      loadLibrary();
+    });
+    const gridBtn = document.getElementById('libraryViewGrid');
+    const listBtn = document.getElementById('libraryViewList');
+    function setLibraryView(view) {
+      libraryView = view;
+      gridBtn.classList.toggle('active', view === 'grid');
+      listBtn.classList.toggle('active', view === 'list');
+      gridBtn.setAttribute('aria-pressed', String(view === 'grid'));
+      listBtn.setAttribute('aria-pressed', String(view === 'list'));
+      loadLibrary();
+    }
+    gridBtn.addEventListener('click', () => setLibraryView('grid'));
+    listBtn.addEventListener('click', () => setLibraryView('list'));
+    document.getElementById('librarySort').addEventListener('change', (e) => {
+      librarySort = e.target.value;
+      loadLibrary();
+    });
+    document.getElementById('accountBtn').addEventListener('click', () => {
+      const acc = document.getElementById('accountSection');
+      const nowHidden = !acc.hidden;
+      acc.hidden = nowHidden;
+      if (!nowHidden) {
+        acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+    document.getElementById('tryAppBtn').addEventListener('click', () => {
+      const acc = document.getElementById('accountSection');
+      acc.hidden = false;
+      acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    function bindCollapsible(toggleId, bodyId) {
+      const toggle = document.getElementById(toggleId);
+      const body = document.getElementById(bodyId);
+      if (!toggle || !body) return;
+      const handler = () => {
+        const isHidden = body.hidden;
+        body.hidden = !isHidden;
+        toggle.setAttribute('aria-expanded', String(isHidden));
+        toggle.classList.toggle('is-open', isHidden);
+      };
+      toggle.addEventListener('click', handler);
+      toggle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handler();
+        }
+      });
+    }
+    bindCollapsible('uploadToggle', 'uploadBody');
+    bindCollapsible('libraryToggle', 'libraryBody');
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      try {
+        await api('/api/login', { method: 'POST', body: { email, password } });
+        await initUser();
+        showToast('Logged in');
+      } catch { showToast('Login failed'); }
+    });
+    document.getElementById('registerBtn').addEventListener('click', async () => {
+      const email = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+      try {
+        await api('/api/register', { method: 'POST', body: { email, password } });
+        await initUser();
+        showToast('Registered');
+      } catch { showToast('Registration failed'); }
+    });
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await api('/api/logout', { method: 'POST' });
+      await initUser();
+    });
+    document.getElementById('createSpaceBtn').addEventListener('click', async () => {
+      const name = document.getElementById('newSpaceName').value.trim();
+      if (!name) return;
+      await api('/api/spaces', { method: 'POST', body: { name } });
+      await initUser();
+    });
+    document.getElementById('setDefaultSpaceBtn').addEventListener('click', async () => {
+      const sel = document.getElementById('spacesSelect');
+      await api('/api/spaces/default', { method: 'POST', body: { space_id: sel.value } });
+      await initUser();
+    });
+    document.getElementById('spacesSelect').addEventListener('change', (e) => {
+      state.spaceId = parseInt(e.target.value, 10);
+      document.getElementById('spaceSelect').value = state.spaceId;
+      loadLibrary();
+    });
+    document.getElementById('spaceSelect').addEventListener('change', (e) => {
+      state.spaceId = parseInt(e.target.value, 10);
+      document.getElementById('spacesSelect').value = state.spaceId;
+      loadLibrary();
+    });
+    document.getElementById('showRegisterLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelector('#authPanel .auth-card').hidden = true;
+      document.getElementById('registerCard').hidden = false;
+    });
+    document.getElementById('cancelRegisterLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelector('#authPanel .auth-card').hidden = false;
+      document.getElementById('registerCard').hidden = true;
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initUser();
     });
   </script>
 </body>

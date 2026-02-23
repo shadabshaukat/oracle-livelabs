@@ -50,3 +50,13 @@ def embed_texts(texts: Iterable[str], batch_size: int | None = None) -> List[lis
         show_progress_bar=False,
     )
     return [e.tolist() for e in embs]
+
+
+def get_text_embedding_dim() -> int:
+    """Return the dimensionality of the current text embedding model."""
+    model = get_model()
+    try:
+        return int(model.get_sentence_embedding_dimension())
+    except Exception:
+        sample = embed_texts(["dimension probe"], batch_size=1)
+        return len(sample[0]) if sample else settings.embedding_dim
