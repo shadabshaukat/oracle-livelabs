@@ -89,6 +89,13 @@ The DB System config_id is set to the created configuration’s OCID by default,
 - Availability Domain:
   - Selected dynamically using the first available AD in the region.
 
+## Integration with search-app
+
+- The `search-app` uses this PostgreSQL system as the **primary persistent AI store**.
+- On startup, the app creates required schema (documents, chunks, image_assets) and indexes (GIN + IVFFlat).
+- Ensure port 5432 is reachable from the app host (Compute VM or local machine).
+- For RAG, OCI GenAI is used for **inference only**; the source of truth remains PostgreSQL.
+
 ## Outputs
 
 - psql_admin_pwd (sensitive): Final PostgreSQL admin password (provided or generated)

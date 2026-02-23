@@ -41,7 +41,6 @@ coverage.xml
 .ipynb_checkpoints/
 
 # Python environments and build outputs
-.env
 .venv/
 venv/
 ENV/

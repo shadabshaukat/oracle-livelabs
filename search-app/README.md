@@ -6,20 +6,80 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 - OCI PostgreSQL with pgvector for embeddings and GIN for full-text
 - Multi-mode retrieval: Semantic, Full-text, Hybrid, and RAG
 - Designed to scale to ~10M embeddings with IVFFlat and tunable params
+- Multi-user accounts with per-user spaces and session cookie auth
+- Image search with OpenCLIP embeddings stored in PostgreSQL
 - One-command deployment using uv (creates/uses a virtual environment)
 
 ## Features
 
 - Upload PDF, HTML, TXT, DOCX. The app extracts, cleans, chunks, embeds, and stores content.
+- Upload images (PNG/JPEG/etc.) to enable image similarity search and tagging.
 - Search modes:
   - Semantic (pgvector cosine/L2/IP)
   - Full-text (PostgreSQL FTS using GIN index)
   - Hybrid (RRF fusion over semantic + FTS)
   - RAG (optional LLM synthesis; OpenAI or OCI GenAI supported)
+- Image search (OpenCLIP + pgvector) with optional text+tag filtering
 - Robust schema and indexes:
   - documents(id, source_path, source_type, title, metadata)
   - chunks(id, document_id, chunk_index, content, content_tsv, content_chars, embedding, embedding_model)
   - Indexes: GIN(content_tsv), IVFFlat(embedding) with opclass per metric, unique(doc_id, chunk_index)
+
+## How Search Works (Deep Dive)
+
+### Text Search Pipeline
+1) **Query intake**: `/api/search` receives {query, mode, top_k, space_id}.
+2) **Embedding** (semantic): query embedded with `EMBEDDING_MODEL`.
+3) **Vector search**: pgvector ANN query (IVFFlat + metric) returns top_k chunks.
+4) **Full‑text search**: PostgreSQL `tsvector` + `ts_rank_cd` (GIN) returns top_k chunks.
+5) **Hybrid**: Reciprocal Rank Fusion merges semantic + FTS into a ranked list.
+6) **RAG**: Top chunks become context; OCI GenAI/OpenAI synthesizes answer. References contain file name/type + optional Object Storage URL.
+
+### Image Search Pipeline
+1) **Query intake**: `/api/image-search` accepts text, tags, or a reference image.
+2) **Embedding**: OpenCLIP embeds text or image to a vector.
+3) **Vector search**: pgvector similarity against stored image vectors.
+4) **Result shaping**: returns caption/tags + `thumbnail_url` (served by `/api/image-assets/{id}/thumbnail`) for the UI.
+
+## Text Ingestion Lifecycle (All File Types)
+
+1) **Upload**
+   - `/api/upload` accepts PDF, DOCX/DOC, TXT, HTML/HTM, MD, CSV, JSON, XML, PPTX, XLSX/XLS.
+   - Files are saved locally and optionally mirrored to OCI Object Storage.
+
+2) **Extraction** (`text_utils.py`)
+   - **PDF**: PyMuPDF → pypdf → pdfplumber fallback (tables supported).
+   - **DOCX/DOC**: python-docx with system fallbacks (textutil/antiword/strings).
+   - **TXT/MD**: plain text normalization.
+   - **HTML/XML**: BeautifulSoup extraction with cleanup.
+   - **CSV/JSON/XLSX/PPTX**: structured extraction into text blocks.
+
+3) **Normalization + Chunking**
+   - Paragraph preservation, header/footer cleanup, heading boundaries.
+   - `CHUNK_STRATEGY` + `SENTENCE_SPLITTER` control chunking behavior.
+
+4) **Embedding**
+   - SentenceTransformers generates normalized vectors.
+
+5) **Persist**
+   - Documents stored in `documents`.
+   - Chunks stored in `chunks` with embeddings + full-text index.
+
+## Image Ingestion Lifecycle
+
+1) **Upload**
+   - Image files are saved locally and optionally mirrored to OCI Object Storage.
+
+2) **Thumbnail + Caption**
+   - Thumbnails created (512px max).
+   - Captioning model generates human‑readable description + keywords.
+
+3) **Embedding**
+   - OpenCLIP encodes image to a semantic vector.
+
+4) **Persist**
+   - Stored in `image_assets` with thumbnail path, caption, tags, embedding.
+   - Document metadata updated with thumbnail + caption details.
 
 ## Requirements
 
@@ -66,10 +126,17 @@ sudo firewall-cmd --reload
 
 Environment variables (see .env.example):
 - DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD
-- Security: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD (protects / and /api)
+- Security: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD (protects /api for non-session use)
+- Session auth for UI login/register: SECRET_KEY, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS, COOKIE_SAMESITE, COOKIE_SECURE, ALLOW_REGISTRATION
 - EMBEDDING_MODEL, EMBEDDING_DIM (default MiniLM 384)
 - PGVECTOR_METRIC (cosine|l2|ip), PGVECTOR_LISTS (~sqrt(n)), PGVECTOR_PROBES (runtime probes)
 - FTS_CONFIG (default english)
+- Image search:
+  - ENABLE_IMAGE_STORAGE (store images + embeddings)
+  - IMAGE_EMBED_MODEL/IMAGE_EMBED_DIM (OpenCLIP settings)
+  - IMAGE_EMBED_DEVICE (cpu/cuda)
+  - IMAGE_SEARCH_TEXT_WEIGHT, IMAGE_SEARCH_VECTOR_WEIGHT
+  - IMAGE_KEYWORD_MAX (max tags stored per image)
 - Storage backend:
   - STORAGE_BACKEND=local|oci|both (default local)
   - OCI_OS_BUCKET_NAME (required when STORAGE_BACKEND includes 'oci')
@@ -86,19 +153,31 @@ Environment variables (see .env.example):
       - OCI_CONFIG_FILE + OCI_CONFIG_PROFILE (recommended), or
       - API key envs: OCI_TENANCY_OCID, OCI_USER_OCID, OCI_FINGERPRINT, OCI_PRIVATE_KEY_PATH, OCI_REGION
 
+### Chunking Configuration
+- `CHUNK_STRATEGY=recursive|sentence_pack` controls the chunker.
+- `SENTENCE_SPLITTER=regex|nltk|spacy` selects sentence splitting behavior (default nltk).
+- `CHUNK_SIZE` and `CHUNK_OVERLAP` adjust chunk granularity.
+
 ## Endpoints
 
 - GET /api/health
 - GET /api/ready (DB readiness: checks extensions, tables, and indexes)
-- POST /api/upload (multipart) files[]
-- POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k }
+- POST /api/upload (multipart) files[] (space_id optional)
+- POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k, space_id }
+- POST /api/image-search (query/tags or reference image)
+- GET /api/image-assets/{image_id}/thumbnail (thumbnail for image results)
+- GET /api/doc-thumbnail?doc_id=<id> (document thumbnail for Library)
+- GET /api/kb (library listing)
+- Auth: /api/register, /api/login, /api/logout, /api/me
 - GET /api/llm-config (OCI LLM config snapshot – provider/region/endpoint; compartment/model presence)
 - POST /api/llm-test ({question, context}) – verifies LLM connectivity; returns ok + chat_ok/text_ok
 - GET/POST /api/llm-debug ({question, context}) – diagnostic shape/fields for OCI responses
 
 UI
-- Root at /. Includes: Search, Upload, Status tabs; RAG answer shows an “LLM answer” badge when the model is used.
+- Root at /. Includes: Search, Upload, Library, and Account (login/register) sections.
+- Space selector in the top bar filters uploads/searches/library per user space.
 - RAG answers include a “References” list (file name, type, and a chunk anchor). Full source paths are not exposed.
+- Image search renders cards using `thumbnail_url` and shows caption/tags/score.
 
 Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 if you’ve just updated templates.
 
@@ -159,6 +238,7 @@ curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
 - Uses a recursive character splitter inspired by LangChain’s RecursiveCharacterTextSplitter with separators (\n\n, \n, ". ", " ", "").
 - Defaults: chunk_size=2500 and chunk_overlap=250 (tune in code or via the UI ingest parameters).
 - The order of separators ensures we prefer paragraph and sentence boundaries before falling back to word and character splits.
+- `sentence_pack` strategy packs paragraph → sentences → chunk windows, with recursive fallback for long sentences.
 - Supports PDF, HTML, TXT, and DOCX extraction. For PDFs, you can set USE_PYMUPDF=true to prefer higher-quality extraction.
 
 ## Scaling to 10M vectors
@@ -218,3 +298,6 @@ WantedBy=multi-user.target
 
 - PDF extraction quality:
   - Set USE_PYMUPDF=true to prefer PyMuPDF if installed (also enable the optional `pdf` dependency group).
+- Image cards missing:
+  - Confirm `/api/image-assets/{image_id}/thumbnail` returns 200.
+  - Ensure you are logged in (session cookie required for image assets).

@@ -18,12 +18,28 @@ This repository contains two related stacks that together deliver an enterprise 
 ## Documentation Index
 - Terraform stack: [oci_postgres_tf_stack/README.md](oci_postgres_tf_stack/README.md)
 - Application: [search-app/README.md](search-app/README.md)
+- Deployment: [DEPLOYMENT.md](DEPLOYMENT.md)
+- Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 
 ## Architecture Overview
 - Terraform provisions the network and OCI PostgreSQL. Optional compute can be created.
 - The app connects to OCI PostgreSQL and self‑manages schema and indexes on startup (CREATE IF NOT EXISTS).
-- Files uploaded via UI/API are saved locally under `storage/uploads/YYYY/MM/DD/HHMMSS/filename`. When configured, they are also uploaded to OCI Object Storage with the same object path; the public object URL is stored in document metadata and rendered as a link in the UI References panel.
+- Files uploaded via UI/API are saved locally under `storage/uploads/YYYY/MM/DD/HHMMSS/filename`. When configured, they are also uploaded to OCI Object Storage with the same object path; the object URL is stored in document metadata and rendered as a link in the UI References panel.
+
+### End-to-end Workflow (Text + Image)
+1) **Upload** (UI or API) → files stored locally and optionally in OCI Object Storage.
+2) **Ingest** → text extraction (PDF/DOCX/TXT/HTML/MD/CSV/JSON/XML), normalization, chunking, embeddings.
+3) **Index** →
+   - Text: chunk content stored in `chunks` with generated `content_tsv` for full‑text.
+   - Vectors: embedding stored in `chunks.embedding` (pgvector) for semantic search.
+   - Images: OpenCLIP embeddings stored per image; thumbnails saved for fast display.
+4) **Search** →
+   - Semantic: vector similarity via pgvector.
+   - Full‑text: PostgreSQL `tsvector` + GIN index.
+   - Hybrid: Reciprocal Rank Fusion of semantic + full‑text results.
+   - RAG: uses Hybrid results as context; optional LLM synthesis.
+5) **Render** → UI shows LLM response (if used), search matches, references, and image cards.
 
 
 ## Deploying the Infrastructure
@@ -112,9 +128,15 @@ uv run searchapp
 ```
 This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth credentials in `.env`.
 
+### Common Deployment Patterns
+- **Local dev**: run `uv sync` and `uv run searchapp`.
+- **VM (OCI Compute)**: copy repo + `.env`, run `./run.sh`, optionally set up systemd (see search-app/README.md).
+- **Private DB access**: ensure the VM is in the same VCN/subnet or a peered network; allow 5432 only from trusted sources.
+
 ### Upload Behavior
 - Files are saved to `storage/uploads/YYYY/MM/DD/HHMMSS/<basename>`.
 - If `STORAGE_BACKEND` includes `oci` and `OCI_OS_BUCKET_NAME` is set, the same date/time path is uploaded to Object Storage and the URL is saved in document metadata. The UI References panel will display a clickable link when the Object Storage URL is available.
+- Image uploads generate thumbnails for faster UI rendering in Library and Image Search.
 
 ### Validating the System
 - Health: `GET /api/health` → `{ "status": "ok" }`
@@ -128,6 +150,11 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - Full‑Text: PostgreSQL FTS (GIN) with `ts_rank_cd`
 - Hybrid: Reciprocal Rank Fusion over semantic and full‑text results
 - RAG: Optional LLM synthesis using OpenAI or OCI GenAI
+
+### Image Search Flow
+- Images are embedded with OpenCLIP and stored in PostgreSQL.
+- Image search accepts a text query, tags, or a reference image.
+- Results include `thumbnail_url` for the UI (served by `/api/image-assets/{id}/thumbnail`) and metadata tags/captions.
 
 
 ## Typical End‑to‑End Flow
@@ -143,6 +170,7 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - PDF extraction quality: set `USE_PYMUPDF=true` and ensure pdf extras are installed (`uv sync --extra pdf`)
 - Uploads to OCI: verify `STORAGE_BACKEND` and `OCI_OS_BUCKET_NAME`; ensure OCI credentials are available
 - Authentication: Basic Auth protects `/` and `/api`
+- Images not rendering: confirm `/api/image-assets/{image_id}/thumbnail` returns 200 and that you are logged in (session cookies).
 
 
 ## License

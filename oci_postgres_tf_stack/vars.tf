@@ -105,12 +105,12 @@ variable "compute_shape" {
 
 variable "compute_ocpus" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "compute_memory_in_gbs" {
   type    = number
-  default = 8
+  default = 16
 }
 
 variable "compute_assign_public_ip" {
@@ -140,7 +140,7 @@ variable "compute_nsg_ids" {
 
 variable "compute_boot_volume_size_in_gbs" {
   type    = number
-  default = 50
+  default = 250
 }
 
 ## Object Storage
