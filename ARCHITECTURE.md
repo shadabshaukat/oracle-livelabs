@@ -1,6 +1,6 @@
 # Architecture: OCI PostgreSQL + Enterprise Search App
 
-This document provides a full, in-depth view of the system architecture, focusing on how data flows through ingestion, storage, and retrieval for both text and image content.
+This document provides a full, in-depth view of the system architecture, focusing on how data flows through ingestion, storage, and retrieval for text, image, SQL Search, and Deep Research content.
 
 ## High-Level Components
 
@@ -12,7 +12,7 @@ This document provides a full, in-depth view of the system architecture, focusin
 2) **FastAPI Service (search-app)**
    - Handles upload, ingestion, chunking, embedding, search, and UI rendering.
    - Manages schema creation and index setup on startup.
-   - Exposes API endpoints for text search, image search, upload, library, and auth.
+   - Exposes API endpoints for text search, image search, Deep Research, SQL Search, search history, upload, library, and auth.
 
 3) **OCI Generative AI (Inference + Reasoning)**
    - RAG synthesis uses OCI GenAI to answer from retrieved context.
@@ -73,6 +73,23 @@ This document provides a full, in-depth view of the system architecture, focusin
    - OCI GenAI called to synthesize an answer.
    - References include file name/type + object storage link if present.
 
+## Deep Research Lifecycle
+
+1) **Conversation start**
+   - `/api/deep-research/start` creates a Postgres-backed conversation scoped to the active space.
+
+2) **Ask + Persist**
+   - `/api/deep-research/ask` stores a user step, runs research, and persists assistant steps plus references.
+
+3) **Follow-up handling**
+   - Suggested follow-up questions return in assistant metadata and open a response modal in the UI.
+
+4) **Notebook**
+   - Notebook pins persist insights in `deep_research_notebook_entries`.
+
+5) **Persistent memory**
+   - Optional DR memory reuse leverages the shared `memory_events` store (with pgvector similarity).
+
 ## Image Ingestion Lifecycle (End-to-End)
 
 1) **Upload**
@@ -127,6 +144,9 @@ This document provides a full, in-depth view of the system architecture, focusin
 - `documents`: metadata + file paths.
 - `chunks`: text chunks + embeddings + full-text index.
 - `image_assets`: images + thumbnails + embeddings + captions/tags.
+- `search_sessions` + `search_activity`: per-session history with request/response payloads.
+- `deep_research_conversations`, `deep_research_steps`, `deep_research_notebook_entries`, `conversation_external_docs`.
+- `memory_events`: persistent memory store shared by text, SQL, and DR.
 
 ## Summary
 
@@ -134,3 +154,4 @@ This document provides a full, in-depth view of the system architecture, focusin
 - **OCI GenAI is used only for inference/reasoning in RAG.**
 - **Image models (OpenCLIP + captioning) run on the VM/app host.**
 - **Both text and image lifecycles are fully indexable and queryable through PostgreSQL.**
+- **Valkey/Redis caches are removed; in-process LLM caching uses a TTL.**

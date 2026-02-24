@@ -388,6 +388,123 @@ def init_db(s: Settings = settings) -> None:
                 """
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deep_research_conversations (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+                    conversation_id TEXT UNIQUE NOT NULL,
+                    title TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dr_conversations_user_time
+                  ON deep_research_conversations(user_id, updated_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dr_conversations_space_time
+                  ON deep_research_conversations(space_id, updated_at DESC);
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deep_research_steps (
+                    id BIGSERIAL PRIMARY KEY,
+                    conversation_id TEXT NOT NULL REFERENCES deep_research_conversations(conversation_id) ON DELETE CASCADE,
+                    step_index INT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    context_refs JSONB DEFAULT '[]'::jsonb,
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    UNIQUE(conversation_id, step_index)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dr_steps_convo_time
+                  ON deep_research_steps(conversation_id, created_at DESC);
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deep_research_notebook_entries (
+                    id BIGSERIAL PRIMARY KEY,
+                    conversation_id TEXT NOT NULL REFERENCES deep_research_conversations(conversation_id) ON DELETE CASCADE,
+                    title TEXT,
+                    content TEXT NOT NULL,
+                    source JSONB DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dr_notebook_convo_time
+                  ON deep_research_notebook_entries(conversation_id, created_at DESC);
+                """
+            )
+
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS conversation_external_docs (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+                    conversation_id TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    parent_url TEXT,
+                    depth INT DEFAULT 0,
+                    chunk_index INT NOT NULL,
+                    title TEXT,
+                    content TEXT NOT NULL,
+                    snippet TEXT,
+                    content_hash TEXT,
+                    metadata JSONB DEFAULT '{{}}'::jsonb,
+                    embedding vector({dim}),
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now(),
+                    UNIQUE(user_id, conversation_id, url, chunk_index)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_conversation_external_docs_user_convo
+                  ON conversation_external_docs(user_id, conversation_id, created_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_conversation_external_docs_space
+                  ON conversation_external_docs(space_id, conversation_id, created_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_conversation_external_docs_url
+                  ON conversation_external_docs(url);
+                """
+            )
+            cur.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_conversation_external_docs_embedding_ivfflat
+                  ON conversation_external_docs USING ivfflat (embedding {opclass})
+                  WITH (lists = {s.pgvector_lists});
+                """
+            )
+
         logger.info(
             "Database initialized with text_dim=%s image_dim=%s metric=%s lists=%s",
             dim,

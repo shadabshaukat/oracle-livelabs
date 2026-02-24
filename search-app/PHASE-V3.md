@@ -5,6 +5,8 @@ This phase extends the Enterprise Search App with two major features:
 1. **OCR-driven metadata for images** (detect text in images, extract, and make it searchable)
 2. **NL2SQL** (natural language to SQL) with a dedicated **SQL Search** UI and backend
 
+Phase V3 also absorbed **Deep Research (DR)** upgrades so the platform is unified across text, SQL, and DR. This includes search history capture, persistent memory parity, and complete removal of the Valkey/Redis cache in favor of OCI PostgreSQL.
+
 The goal is to keep the existing UI/UX feel while seamlessly integrating these new capabilities.
 
 ---
@@ -98,9 +100,11 @@ Add a new search mode in the UI that lets users ask natural language questions a
 - `SQL_PERSISTENT_MEMORY_ENABLED=false`
 - `TEXT_PERSISTENT_MEMORY_ENABLED=false`
 - `IMAGE_PERSISTENT_MEMORY_ENABLED=false`
+- `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED=true`
 - `PERSISTENT_MEMORY_TOP_K=5`
 - `PERSISTENT_MEMORY_MAX_CHARS=4000`
 - `PERSISTENT_MEMORY_SUMMARY_MAX_CHARS=1200`
+- `LLM_CACHE_TTL_SECONDS=3600`
 
 ---
 
@@ -112,6 +116,8 @@ Add a new search mode in the UI that lets users ask natural language questions a
 - [x] SQL Search UI + UX
 - [x] Updated docs + env example
 - [x] Search history + session activity capture
+- [x] Deep Research persistence + history + memory parity
+- [x] Valkey/Redis removal (Postgres-only persistence)
 
 ---
 
@@ -207,6 +213,20 @@ Add a new search mode in the UI that lets users ask natural language questions a
 - Added `/api/search-history` and `/api/search-history/{session_id}` endpoints for UI display.
 - Account panel now includes a **Search History** accordion with session list + drill-in details.
 - Search history now supports pagination + filters (activity type, space, and time range) and surfaces audit metadata (last IP + user-agent per session; client IP + user-agent per activity).
+
+### Deep Research Integration (V3 continuation)
+- **Unified persistence**: DR conversations, steps, notebook entries, and external docs are stored in Postgres (`deep_research_conversations`, `deep_research_steps`, `deep_research_notebook_entries`, `conversation_external_docs`).
+- **Search history**: DR runs are logged with `activity_type=deep_research` and a summary of `Deep Research · {message[:120]}` to align with text/sql history.
+- **Persistent memory parity**: DR uses the same `memory_events` store and retrieval helpers as text/sql (`memory_store.py`), with `persistent_memory` opt-in controlled by `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`.
+- **UI parity**:
+  - DR persistent memory toggle appears in the header when enabled.
+  - Follow-up questions open a modal for response entry (enter-to-send, send, close).
+  - Search history filter includes **Deep Research**.
+- **Valkey removed**: All Valkey/Redis caches were removed. LLM responses now use a lightweight in-process cache (`app/llm.py`) with `LLM_CACHE_TTL_SECONDS`.
+
+### Deep Research Migration Notes
+- If upgrading an existing database, apply `schema_v3.sql` or ensure `app/db.py` has run to create DR tables.
+- Remove any Valkey/Redis variables from .env; only OCI PostgreSQL is required.
 
 ### Manual Role Assignment
 Use SQL to assign roles until an admin UI is available:

@@ -98,6 +98,7 @@
                     <option value="text_rag">Text · RAG</option>
                     <option value="image_search">Image search</option>
                     <option value="sql_search">SQL search</option>
+                    <option value="deep_research">Deep Research</option>
                   </select>
                 </div>
                 <div class="history-filter-field">
@@ -161,6 +162,7 @@
 
       <div class="searchbar">
         <input id="query" class="search-input" type="text" placeholder="Search..." autocomplete="off" />
+        <button id="drBtn" class="dr-icon" title="AI Deep Research" aria-label="Open AI Deep Research">AI</button>
       </div>
 
       <div class="row middle search-actions-row">
@@ -374,6 +376,133 @@
     </section>
   </main>
 
+  <div id="drBackdrop" class="dr-backdrop" hidden></div>
+  <div id="drModal" class="dr-modal" hidden aria-modal="true" role="dialog">
+    <div class="dr-header">
+      <div class="dr-title">
+        <div class="dr-title-main">
+          <strong>Deep Research</strong>
+        </div>
+        <div class="dr-title-controls">
+          <input id="drActiveTitle" type="text" placeholder="Session name" aria-label="Conversation title" />
+          <button id="drSessionRefresh" class="ghost dr-session-refresh" title="Start a new session">↻</button>
+          <button id="drRenameBtn" class="ghost dr-rename" title="Rename session">Rename</button>
+        </div>
+      </div>
+      <div class="dr-header-actions">
+        <label class="ios-toggle" title="Persist deep research memory" id="drPersistentMemoryToggle" {% if not deep_research_persistent_memory_enabled %}hidden{% endif %}>
+          <input id="drPersistentMemory" type="checkbox" />
+          <span class="ios-toggle-slider"></span>
+          <span class="ios-toggle-label">Memory</span>
+        </label>
+        <label class="ios-toggle" title="Always include web search">
+          <input id="drForceWeb" type="checkbox" />
+          <span class="ios-toggle-slider"></span>
+          <span class="ios-toggle-label">Web</span>
+        </label>
+        <div class="dr-menu">
+          <button id="drMenuBtn" class="ghost pill" title="Actions" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div id="drMenu" class="dr-menu-panel" role="menu" hidden>
+            <button id="drMenuSessions" class="ghost" role="menuitem">Sessions</button>
+            <button id="drMenuNotebook" class="ghost" role="menuitem">Notebook</button>
+            <button id="drMenuReset" class="ghost" role="menuitem">New session</button>
+          </div>
+        </div>
+        <button id="drClose" class="ghost" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="dr-main">
+      <div class="dr-main-hero" id="drHero">
+        <div>
+          <p class="pill-badge pill-source">Research mode</p>
+          <h3>Ask or paste references to investigate deeper</h3>
+          <p id="drHeroStatus" class="muted">Sessions auto-save per space. URLs can be included directly inside your question.</p>
+          <div id="drSourceTicker" class="dr-source-ticker" hidden>
+            <span class="dr-source-dot"></span>
+            <span id="drSourceTickerText" class="dr-source-text"></span>
+          </div>
+        </div>
+      </div>
+      <div id="drEmptyState" class="dr-timeline-empty">
+        <h3>No conversation yet</h3>
+        <p>Type a question to create your knowledge timeline.</p>
+        <button id="drNewSession" class="ghost">Start fresh</button>
+      </div>
+      <div id="drTimeline" class="dr-chat" aria-live="polite"></div>
+      <div class="dr-composer">
+        <textarea id="drMessage" rows="3" placeholder="Ask a question, add bullet points, or paste URLs inline…"></textarea>
+        <div class="dr-composer-actions">
+          <div class="dr-composer-left">
+            <button id="drSessionsToggleSecondary" class="ghost text-link" type="button">Sessions</button>
+            <button id="drNotebookToggleSecondary" class="ghost text-link" type="button">Notebook</button>
+          </div>
+          <div class="dr-composer-right">
+            <span id="drIngestStatus" class="dr-ingest-status" hidden>
+              <span class="dr-ingest-spinner" aria-hidden="true"></span>
+              <span class="dr-ingest-text">Ingesting URLs…</span>
+            </span>
+            <span id="drWebStatus" class="muted"></span>
+            <button id="drSend" class="primary">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside id="drSessionsDrawer" class="dr-drawer" data-drawer="sessions" aria-label="Deep research sessions">
+      <div class="dr-drawer-head">
+        <div>
+          <strong>Sessions</strong>
+          <p class="muted" id="drSessionHint">Resume or branch your research</p>
+        </div>
+        <button class="ghost" data-dr-drawer-close>&times;</button>
+      </div>
+      <div class="dr-drawer-body">
+        <button id="drNewSessionDrawer" class="ghost fullwidth">＋ New session</button>
+        <div class="dr-convo-list" id="drConvoList">
+          <div class="muted">Loading sessions…</div>
+        </div>
+      </div>
+    </aside>
+    <aside id="drNotebookDrawer" class="dr-drawer" data-drawer="notebook" aria-label="Deep research notebook">
+      <div class="dr-drawer-head">
+        <strong>Notebook Pins</strong>
+        <div class="drawer-head-actions">
+          <button id="drNotebookRefresh" class="ghost" title="Refresh notebook">↻</button>
+          <button class="ghost" data-dr-drawer-close>&times;</button>
+        </div>
+      </div>
+      <div class="dr-drawer-body">
+        <form id="drNotebookForm" class="dr-notebook-form">
+          <input id="drNotebookTitle" type="text" placeholder="Note title" />
+          <textarea id="drNotebookContent" rows="3" placeholder="What insight do you want to pin?"></textarea>
+          <div class="dr-notebook-actions">
+            <button type="submit" class="primary">Add note</button>
+            <button type="button" id="drNotebookClear" class="ghost">Clear</button>
+          </div>
+        </form>
+        <div id="drNotebookEmpty" class="muted">No notebook entries yet.</div>
+        <div id="drNotebookList" class="dr-notebook-list"></div>
+      </div>
+    </aside>
+    <div id="drDrawerBackdrop" class="dr-drawer-backdrop" hidden></div>
+  </div>
+  <div id="drFollowupBackdrop" class="dr-followup-backdrop" hidden></div>
+  <div id="drFollowupModal" class="dr-followup-modal" hidden role="dialog" aria-modal="true" aria-label="Answer follow-up">
+    <div class="dr-followup-head">
+      <strong>Answer follow-up</strong>
+      <button id="drFollowupClose" class="ghost" title="Close">✕</button>
+    </div>
+    <div class="dr-followup-body">
+      <p class="muted">Follow-up question</p>
+      <div id="drFollowupQuestion" class="dr-followup-question"></div>
+      <label for="drFollowupAnswer">Your response</label>
+      <textarea id="drFollowupAnswer" rows="4" placeholder="Type your response…"></textarea>
+    </div>
+    <div class="dr-followup-actions">
+      <button id="drFollowupCancel" class="ghost">Cancel</button>
+      <button id="drFollowupSend" class="primary">Send response</button>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script>
@@ -393,7 +522,8 @@
     const persistentMemoryConfig = {
       sqlEnabled: {{ 'true' if sql_persistent_memory_enabled else 'false' }},
       textEnabled: {{ 'true' if text_persistent_memory_enabled else 'false' }},
-      imageEnabled: {{ 'true' if image_persistent_memory_enabled else 'false' }}
+      imageEnabled: {{ 'true' if image_persistent_memory_enabled else 'false' }},
+      deepResearchEnabled: {{ 'true' if deep_research_persistent_memory_enabled else 'false' }}
     };
     // Theme toggle
     (function(){
@@ -630,6 +760,163 @@
         return `<div class="answer-text">${escapeHtml(text).replace(/\n/g, '<br/>')}</div>`;
       }
       return parts.join('');
+    }
+
+    function renderLLMText(text) {
+      const raw = text || '';
+      const segments = raw.split(/```/g);
+      let html = '';
+      segments.forEach((segment, idx) => {
+        if (idx % 2 === 1) {
+          let codeText = segment.replace(/^\r?\n/, '');
+          const lines = codeText.split(/\r?\n/);
+          if (lines.length && /^[a-z0-9_-]+$/i.test(lines[0].trim())) {
+            lines.shift();
+          }
+          codeText = lines.join('\n');
+          html += `<pre class="code"><code>${escapeHtml(codeText)}</code></pre>`;
+        } else {
+          const lines = segment.split(/\r?\n/);
+          let inUl = false;
+          let inOl = false;
+          const out = [];
+          const flushList = () => {
+            if (inUl) { out.push('</ul>'); inUl = false; }
+            if (inOl) { out.push('</ol>'); inOl = false; }
+          };
+          lines.forEach((line) => {
+            const trimmed = line.trimEnd();
+            if (/^\s*[-*]\s+/.test(trimmed)) {
+              if (!inUl) { flushList(); out.push('<ul>'); inUl = true; }
+              out.push(`<li>${escapeHtml(trimmed.replace(/^\s*[-*]\s+/, ''))}</li>`);
+            } else if (/^\s*\d+[\.)\-:]\s+/.test(trimmed)) {
+              if (!inOl) { flushList(); out.push('<ol>'); inOl = true; }
+              out.push(`<li>${escapeHtml(trimmed.replace(/^\s*\d+[\.)\-:]\s+/, ''))}</li>`);
+            } else if (trimmed.trim() === '') {
+              if (inUl || inOl) return;
+              flushList();
+              out.push('<p></p>');
+            } else {
+              flushList();
+              out.push(`<p>${escapeHtml(trimmed)}</p>`);
+            }
+          });
+          flushList();
+          html += out.join('');
+        }
+      });
+      return html.replace(/(<p><\/p>\s*)+/g, '<p></p>');
+    }
+
+    function normalizeUrl(raw) {
+      if (!raw || typeof raw !== 'string') return '#';
+      const trimmed = raw.trim();
+      if (!trimmed) return '#';
+      if (/^https?:\/\//i.test(trimmed)) return trimmed;
+      if (/^[a-z]+:\/\//i.test(trimmed)) return trimmed;
+      return `https://${trimmed.replace(/^\/+/, '')}`;
+    }
+
+    function renderFollowupQuestions(questions) {
+      if (!Array.isArray(questions) || !questions.length) return '';
+      const items = questions.map(q => `<button type="button" class="dr-followup-chip">${escapeHtml(q)}</button>`).join('');
+      return `
+        <div class="dr-followup">
+          <div class="dr-followup-title">Suggested follow-up questions</div>
+          <div class="dr-followup-chips">${items}</div>
+        </div>`;
+    }
+
+    function renderDrMetadata(meta) {
+      if (!meta) return '';
+      const parts = [];
+      if (typeof meta.confidence === 'number') {
+        parts.push(`<span class="badge">Confidence ${(meta.confidence * 100).toFixed(0)}%</span>`);
+      }
+      if (typeof meta.elapsed_seconds === 'number') {
+        const secs = Number(meta.elapsed_seconds);
+        parts.push(`<span class="badge badge--time">${Number.isFinite(secs) ? secs.toFixed(2) : meta.elapsed_seconds}s</span>`);
+      }
+      if (meta.web_attempted) {
+        parts.push('<span class="badge">Web search triggered</span>');
+      } else {
+        parts.push('<span class="badge">Local context only</span>');
+      }
+      return parts.join('');
+    }
+
+    function renderDrReferences(refs) {
+      if (!Array.isArray(refs) || !refs.length) return '';
+      const localRefs = refs.filter(r => r.source === 'local');
+      const webRefs = refs.filter(r => r.source === 'web');
+
+      const buildChunkCard = (ref, idx, type) => {
+        const num = ref.rank ?? (idx + 1);
+        const title = escapeHtml(ref.title || (type === 'local' ? (ref.source_path || '').split('/').pop() || `Document ${ref.document_id ?? idx + 1}` : `Web result ${idx + 1}`));
+        const chunkLabel = typeof ref.chunk_index === 'number' ? `Chunk #${ref.chunk_index}` : null;
+        const subtitleBits = [];
+        if (chunkLabel) subtitleBits.push(chunkLabel);
+        if (type === 'local' && ref.source_path) subtitleBits.push(ref.source_path.split('/').pop());
+        if (type === 'web' && ref.url) subtitleBits.push(ref.url.replace(/^https?:\/\//, ''));
+        const subtitle = subtitleBits.join(' • ');
+        const textField = type === 'local' ? (ref.excerpt || ref.snippet || ref.text || '') : (ref.snippet || ref.excerpt || '');
+        const trimmed = textField.trim();
+        const display = trimmed ? escapeHtml(trimmed.length > 320 ? `${trimmed.slice(0, 320)}…` : trimmed) : '<span class="muted">No excerpt available.</span>';
+        const downloadHref = type === 'local' && ref.document_id ? `/api/doc-download?doc_id=${encodeURIComponent(ref.document_id)}` : '';
+        const badge = type === 'local' ? '<span class="pill-badge">Local</span>' : '<span class="pill-badge pill-web">Web</span>';
+        const action = type === 'local'
+          ? (downloadHref ? `<a class="ghost" href="${escapeHtml(downloadHref)}" target="_blank" rel="noopener">Open document</a>` : '')
+          : `<a class="ghost" href="${escapeHtml(normalizeUrl(ref.url))}" target="_blank" rel="noopener">Open link</a>`;
+        return `
+          <details class="dr-source-card" data-source="${type}">
+            <summary>
+              <div class="dr-source-chip">${badge}<span class="rank">#${num}</span></div>
+              <div class="dr-source-summary">
+                <div class="title">${title}</div>
+                ${subtitle ? `<div class="sub">${escapeHtml(subtitle)}</div>` : ''}
+              </div>
+              <span class="chevron">▸</span>
+            </summary>
+            <div class="dr-source-body">
+              <div class="snippet">${display}</div>
+              <div class="actions">${action || ''}</div>
+            </div>
+          </details>`;
+      };
+
+      const buildDeck = (items, typeLabel, type) => {
+        if (!items.length) return '';
+        return `
+          <details class="dr-source-deck" data-type="${type}">
+            <summary>
+              <div class="deck-header">
+                <span class="deck-title">${typeLabel}</span>
+                <span class="deck-count">${items.length} item${items.length === 1 ? '' : 's'}</span>
+                <span class="chevron">▸</span>
+              </div>
+            </summary>
+            <div class="deck-body">
+              ${items.map((ref, idx) => buildChunkCard(ref, idx, type)).join('')}
+            </div>
+          </details>`;
+      };
+
+      const decks = [
+        buildDeck(localRefs, 'Knowledge Base Sources', 'local'),
+        buildDeck(webRefs, 'Web Sources', 'web')
+      ].filter(Boolean).join('');
+
+      return `
+        <details class="dr-sources">
+          <summary>
+            <span class="pill-badge pill-source">Sources</span>
+            <span class="muted">Tap to expand local & web evidence</span>
+            <span class="chevron">▸</span>
+          </summary>
+          <div class="dr-sources-body">
+            ${decks || '<div class="muted">No supporting evidence returned.</div>'}
+          </div>
+        </details>`;
     }
 
     async function api(path, opts={}) {
@@ -1008,6 +1295,620 @@
     let searchTimer = null;
     let searchMode = 'text';
     let state = { user: null, spaces: [], spaceId: null, role: 'user' };
+
+    const drEls = {
+      modal: document.getElementById('drModal'),
+      backdrop: document.getElementById('drBackdrop'),
+      message: document.getElementById('drMessage'),
+      send: document.getElementById('drSend'),
+      close: document.getElementById('drClose'),
+      newSession: document.getElementById('drNewSession'),
+      hero: document.getElementById('drHero'),
+      sourceTicker: document.getElementById('drSourceTicker'),
+      sourceTickerText: document.getElementById('drSourceTickerText'),
+      heroStatus: document.getElementById('drHeroStatus'),
+      webStatus: document.getElementById('drWebStatus'),
+      ingestStatus: document.getElementById('drIngestStatus'),
+      forceWeb: document.getElementById('drForceWeb'),
+      persistentMemory: document.getElementById('drPersistentMemory'),
+      titleInput: document.getElementById('drActiveTitle'),
+      renameBtn: document.getElementById('drRenameBtn'),
+      refreshBtn: document.getElementById('drSessionRefresh'),
+      timeline: document.getElementById('drTimeline'),
+      emptyState: document.getElementById('drEmptyState'),
+      convoList: document.getElementById('drConvoList'),
+      sessionsToggleSecondary: document.getElementById('drSessionsToggleSecondary'),
+      notebookToggleSecondary: document.getElementById('drNotebookToggleSecondary'),
+      sessionsDrawer: document.getElementById('drSessionsDrawer'),
+      notebookDrawer: document.getElementById('drNotebookDrawer'),
+      drawerBackdrop: document.getElementById('drDrawerBackdrop'),
+      drawerCloseButtons: document.querySelectorAll('[data-dr-drawer-close]'),
+      newSessionDrawerBtn: document.getElementById('drNewSessionDrawer'),
+      notebookForm: document.getElementById('drNotebookForm'),
+      notebookTitle: document.getElementById('drNotebookTitle'),
+      notebookContent: document.getElementById('drNotebookContent'),
+      notebookClear: document.getElementById('drNotebookClear'),
+      notebookList: document.getElementById('drNotebookList'),
+      notebookEmpty: document.getElementById('drNotebookEmpty'),
+      notebookRefresh: document.getElementById('drNotebookRefresh'),
+      menuBtn: document.getElementById('drMenuBtn'),
+      menuPanel: document.getElementById('drMenu'),
+      menuSessions: document.getElementById('drMenuSessions'),
+      menuNotebook: document.getElementById('drMenuNotebook'),
+      menuReset: document.getElementById('drMenuReset'),
+      followupBackdrop: document.getElementById('drFollowupBackdrop'),
+      followupModal: document.getElementById('drFollowupModal'),
+      followupQuestion: document.getElementById('drFollowupQuestion'),
+      followupAnswer: document.getElementById('drFollowupAnswer'),
+      followupSend: document.getElementById('drFollowupSend'),
+      followupCancel: document.getElementById('drFollowupCancel'),
+      followupClose: document.getElementById('drFollowupClose')
+    };
+
+    const drState = {
+      open: false,
+      conversationId: null,
+      conversations: [],
+      steps: [],
+      notebook: [],
+      isSending: false,
+      followupAutoSend: true,
+      pendingFollowup: null
+    };
+
+    function drStorageKey(spaceId) {
+      return `dr:space:${spaceId || '_'}`;
+    }
+
+    function drPersistConversationId(conversationId) {
+      const key = drStorageKey(state.spaceId);
+      try {
+        if (conversationId) localStorage.setItem(key, conversationId);
+        else localStorage.removeItem(key);
+      } catch {}
+    }
+
+    function drRestoreConversationId() {
+      const key = drStorageKey(state.spaceId);
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    }
+
+    function drSetHeroStatus(text) {
+      if (drEls.heroStatus) drEls.heroStatus.textContent = text;
+    }
+
+    function drSetIngesting(active) {
+      if (!drEls.ingestStatus) return;
+      drEls.ingestStatus.hidden = !active;
+    }
+
+    function drShowSourceTicker(labels) {
+      if (!drEls.sourceTicker || !drEls.sourceTickerText) return;
+      const text = (labels || []).filter(Boolean).join(' • ');
+      if (!text) return;
+      drEls.sourceTickerText.textContent = text;
+      drEls.sourceTicker.hidden = false;
+      drEls.sourceTicker.classList.add('active');
+      setTimeout(() => {
+        drEls.sourceTicker.classList.remove('active');
+        drEls.sourceTicker.hidden = true;
+      }, 4500);
+    }
+
+    function drCollectTickerLabels(refs = []) {
+      if (!Array.isArray(refs) || !refs.length) return [];
+      return refs
+        .filter(ref => ref.source === 'local' || ref.source === 'web' || ref.source === 'url')
+        .slice(0, 3)
+        .map(ref => ref.title || ref.url || ref.source_path || 'Source');
+    }
+
+    function drUpdateWebStatus(webAttempted) {
+      if (!drEls.webStatus) return;
+      if (webAttempted) {
+        drEls.webStatus.textContent = 'Web search included';
+        drEls.webStatus.classList.remove('warning');
+      } else {
+        drEls.webStatus.textContent = 'Local knowledge only (toggle to force web)';
+        drEls.webStatus.classList.add('warning');
+      }
+    }
+
+    function drGenerateSessionTitle() {
+      const email = state.user?.email || 'session';
+      const prefix = email.split('@')[0] || 'session';
+      const hash = Math.random().toString(36).slice(2, 8);
+      return `${prefix}-${hash}`;
+    }
+
+    async function drAutoSaveSessionTitle() {
+      if (!drState.conversationId || !drEls.titleInput) return;
+      let title = drEls.titleInput.value.trim();
+      if (!title) {
+        title = drGenerateSessionTitle();
+        drEls.titleInput.value = title;
+      }
+      try {
+        await api(`/api/deep-research/conversations/${encodeURIComponent(drState.conversationId)}/title`, {
+          method: 'POST',
+          body: { title }
+        });
+        await drFetchConversations();
+        drRenderConversations();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function drRenderTimeline(steps = drState.steps) {
+      const chat = drEls.timeline;
+      if (!chat) return;
+      chat.innerHTML = '';
+      if (!steps.length) {
+        if (drEls.emptyState) drEls.emptyState.hidden = false;
+        chat.hidden = true;
+        return;
+      }
+      if (drEls.emptyState) drEls.emptyState.hidden = true;
+      chat.hidden = false;
+      const frag = document.createDocumentFragment();
+      steps.forEach((step) => {
+        const div = document.createElement('div');
+        div.className = 'dr-msg ' + (step.role === 'user' ? 'me' : 'ai');
+        const ts = step.created_at ? `<div class="muted" style="font-size:11px;margin-bottom:4px;">${new Date(step.created_at).toLocaleString()}</div>` : '';
+        if (step.role === 'assistant') {
+          const references = step.context_refs && step.context_refs.length ? step.context_refs : step.metadata?.references;
+          const meta = step.metadata || {};
+          const badges = renderDrMetadata(meta);
+          const followups = renderFollowupQuestions(meta.followup_questions || []);
+          div.innerHTML = `<div class="bubble">${ts}${badges ? `<div class="dr-meta">${badges}</div>` : ''}${renderLLMText(step.content || '')}${followups}${renderDrReferences(references)}</div>`;
+        } else {
+          div.innerHTML = `<div class="bubble">${ts}<p>${escapeHtml(step.content || '')}</p></div>`;
+        }
+        frag.appendChild(div);
+        if (step.pending) {
+          const pending = document.createElement('div');
+          pending.className = 'dr-msg dr-msg-pending';
+          pending.innerHTML = `
+            <div class="dr-thinking-inline" aria-live="polite">
+              <div class="dr-typing-dots" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>`;
+          frag.appendChild(pending);
+        }
+      });
+      chat.appendChild(frag);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function drRenderNotebook(list = drState.notebook) {
+      if (!drEls.notebookList || !drEls.notebookEmpty) return;
+      drEls.notebookList.innerHTML = '';
+      if (!list.length) {
+        drEls.notebookEmpty.hidden = false;
+        return;
+      }
+      drEls.notebookEmpty.hidden = true;
+      const frag = document.createDocumentFragment();
+      list.forEach((entry) => {
+        const card = document.createElement('div');
+        card.className = 'dr-note-card';
+        card.dataset.entryId = entry.entry_id;
+        card.innerHTML = `
+          <h4>${escapeHtml(entry.title || 'Notebook entry')}</h4>
+          <p>${escapeHtml(entry.content || '')}</p>
+          <div class="note-meta">
+            <span>${entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</span>
+            <div class="note-actions">
+              <button type="button" class="ghost" data-dr-delete-note="${entry.entry_id}">Delete</button>
+            </div>
+          </div>
+        `;
+        frag.appendChild(card);
+      });
+      drEls.notebookList.appendChild(frag);
+    }
+
+    function drRenderConversations() {
+      if (!drEls.convoList) return;
+      drEls.convoList.innerHTML = '';
+      if (!drState.conversations.length) {
+        drEls.convoList.innerHTML = '<div class="muted">No sessions yet. Start a new one.</div>';
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      drState.conversations.forEach((convo) => {
+        const div = document.createElement('div');
+        div.className = 'dr-convo-card' + (convo.conversation_id === drState.conversationId ? ' active' : '');
+        div.dataset.drConversation = convo.conversation_id;
+        const snippetRaw = (convo.first_question || '').trim();
+        const snippet = snippetRaw.length > 140 ? `${snippetRaw.slice(0, 140)}…` : snippetRaw;
+        const updated = convo.updated_at ? new Date(convo.updated_at).toLocaleString() : '';
+        div.innerHTML = `
+          <div class="snippet">${escapeHtml(snippet || 'No question yet')}</div>
+          <div class="meta">
+            <span>${convo.step_count || 0} steps</span>
+            ${updated ? `<span>${escapeHtml(updated)}</span>` : ''}
+          </div>
+        `;
+        frag.appendChild(div);
+      });
+      drEls.convoList.appendChild(frag);
+    }
+
+    function drGetDrawer(which) {
+      if (which === 'sessions') return drEls.sessionsDrawer;
+      if (which === 'notebook') return drEls.notebookDrawer;
+      return null;
+    }
+
+    function drShowDrawer(which) {
+      const drawer = drGetDrawer(which);
+      if (!drawer) return;
+      drawer.classList.add('open');
+      if (drEls.drawerBackdrop) {
+        drEls.drawerBackdrop.hidden = false;
+        drEls.drawerBackdrop.classList.add('open');
+      }
+    }
+
+    function drHideDrawer(which) {
+      const drawer = drGetDrawer(which);
+      if (!drawer) return;
+      drawer.classList.remove('open');
+    }
+
+    function drHideAllDrawers() {
+      drHideDrawer('sessions');
+      drHideDrawer('notebook');
+      if (drEls.drawerBackdrop) {
+        drEls.drawerBackdrop.classList.remove('open');
+        drEls.drawerBackdrop.hidden = true;
+      }
+    }
+
+    function drToggleMenu(forceState) {
+      if (!drEls.menuPanel || !drEls.menuBtn) return;
+      const willOpen = typeof forceState === 'boolean' ? forceState : drEls.menuPanel.hidden;
+      drEls.menuPanel.hidden = !willOpen;
+      drEls.menuBtn.setAttribute('aria-expanded', String(willOpen));
+    }
+
+    function drToggleDrawer(which) {
+      const drawer = drGetDrawer(which);
+      if (!drawer) return;
+      const willOpen = !drawer.classList.contains('open');
+      drHideAllDrawers();
+      if (willOpen) drShowDrawer(which);
+    }
+
+    function drOpenFollowupModal(question) {
+      if (!drEls.followupModal || !drEls.followupBackdrop) return;
+      drState.pendingFollowup = question;
+      if (drEls.followupQuestion) drEls.followupQuestion.textContent = question || '';
+      if (drEls.followupAnswer) drEls.followupAnswer.value = '';
+      drEls.followupBackdrop.hidden = false;
+      drEls.followupModal.hidden = false;
+      drEls.followupBackdrop.classList.add('open');
+      drEls.followupModal.classList.add('open');
+      drEls.followupAnswer?.focus();
+    }
+
+    function drCloseFollowupModal() {
+      if (!drEls.followupModal || !drEls.followupBackdrop) return;
+      drEls.followupBackdrop.classList.remove('open');
+      drEls.followupModal.classList.remove('open');
+      drEls.followupBackdrop.hidden = true;
+      drEls.followupModal.hidden = true;
+      drState.pendingFollowup = null;
+    }
+
+    function drExtractUrlsFromText(raw) {
+      if (!raw) return [];
+      const urlRegex = /https?:\/\/[^\s)]+/gi;
+      const matches = raw.match(urlRegex) || [];
+      const seen = new Set();
+      const urls = [];
+      for (const url of matches) {
+        if (seen.has(url)) continue;
+        seen.add(url);
+        urls.push(url);
+      }
+      return urls;
+    }
+
+    async function drStartConversation() {
+      const payload = { space_id: state.spaceId };
+      const r = await api('/api/deep-research/start', { method: 'POST', body: payload });
+      return r.conversation_id;
+    }
+
+    async function drFetchConversations() {
+      if (!state.user) return [];
+      const params = state.spaceId ? `?space_id=${encodeURIComponent(state.spaceId)}` : '';
+      try {
+        const res = await api(`/api/deep-research/conversations${params}`);
+        drState.conversations = Array.isArray(res.conversations) ? res.conversations : [];
+        drRenderConversations();
+        return drState.conversations;
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to load sessions');
+        drState.conversations = [];
+        drRenderConversations();
+        return [];
+      }
+    }
+
+    async function drLoadConversationDetail(conversationId) {
+      if (!conversationId) return;
+      try {
+        const detail = await api(`/api/deep-research/conversations/${encodeURIComponent(conversationId)}`);
+        drState.steps = detail.steps || [];
+        drState.notebook = detail.notebook || [];
+        drRenderTimeline();
+        drRenderNotebook();
+        const convo = detail.conversation || {};
+        if (drEls.titleInput) {
+          if (convo.title) {
+            drEls.titleInput.value = convo.title;
+          } else {
+            drEls.titleInput.value = drGenerateSessionTitle();
+            drAutoSaveSessionTitle();
+          }
+        }
+        drSetHeroStatus(drState.steps.length ? `${drState.steps.length} steps captured` : 'Ask a question to begin.');
+        const lastAssistant = [...drState.steps].reverse().find(step => step.role === 'assistant');
+        if (lastAssistant) {
+          drUpdateWebStatus(Boolean(lastAssistant.metadata?.web_attempted));
+          drShowSourceTicker(drCollectTickerLabels(lastAssistant.context_refs || lastAssistant.metadata?.references || []));
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to load conversation');
+      }
+    }
+
+    async function drEnsureConversationId({ allowCreate = true } = {}) {
+      if (drState.conversationId) return drState.conversationId;
+      const restored = drRestoreConversationId();
+      if (restored) {
+        drState.conversationId = restored;
+        return restored;
+      }
+      if (!allowCreate || !state.spaceId) return null;
+      const cid = await drStartConversation();
+      drState.conversationId = cid;
+      drPersistConversationId(cid);
+      return cid;
+    }
+
+    async function drSelectConversation(conversationId, { refreshList = false } = {}) {
+      if (!conversationId) return;
+      drState.conversationId = conversationId;
+      drPersistConversationId(conversationId);
+      if (refreshList) await drFetchConversations();
+      drRenderConversations();
+      await drLoadConversationDetail(conversationId);
+    }
+
+    async function drBootstrap() {
+      if (!state.user) {
+        showToast('Login required');
+        return;
+      }
+      await drFetchConversations();
+      const restored = drRestoreConversationId();
+      const exists = drState.conversations.find(c => c.conversation_id === restored);
+      if (exists) {
+        await drSelectConversation(restored);
+        return;
+      }
+      if (drState.conversations.length) {
+        await drSelectConversation(drState.conversations[0].conversation_id);
+        return;
+      }
+      if (state.spaceId) {
+        const cid = await drStartConversation();
+        await drFetchConversations();
+        await drSelectConversation(cid);
+      } else {
+        drSetHeroStatus('Choose a space to start Deep Research.');
+      }
+    }
+
+    function drSetSendingState(isSending) {
+      drState.isSending = isSending;
+      if (drEls.send) drEls.send.disabled = isSending;
+      if (drEls.message) drEls.message.disabled = isSending;
+      if (drEls.followupSend) drEls.followupSend.disabled = isSending;
+    }
+
+    async function drSubmitMessage(text) {
+      if (!text || drState.isSending) return;
+      drSetSendingState(true);
+      drSetIngesting(false);
+      const tmpStep = { role: 'user', content: text, created_at: new Date().toISOString(), pending: true };
+      drRenderTimeline([...drState.steps, tmpStep]);
+      try {
+        const cid = await drEnsureConversationId();
+        if (!cid) throw new Error('No conversation');
+        if (drEls.titleInput && !drEls.titleInput.value.trim()) {
+          drEls.titleInput.value = drGenerateSessionTitle();
+        }
+        const body = {
+          conversation_id: cid,
+          message: text,
+          space_id: state.spaceId,
+          force_web: drEls.forceWeb?.checked || false,
+          persistent_memory: drEls.persistentMemory?.checked || false
+        };
+        const urls = drExtractUrlsFromText(text);
+        if (urls.length) {
+          body.urls = urls;
+          drSetIngesting(true);
+        }
+        const resp = await api('/api/deep-research/ask', { method: 'POST', body });
+        drUpdateWebStatus(Boolean(resp.web_attempted));
+        if (resp && Array.isArray(resp.references)) {
+          drShowSourceTicker(drCollectTickerLabels(resp.references));
+        }
+        await drAutoSaveSessionTitle();
+        await drFetchConversations();
+        await drLoadConversationDetail(cid);
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to send research question');
+        await drLoadConversationDetail(drState.conversationId);
+      } finally {
+        drSetSendingState(false);
+        drSetIngesting(false);
+      }
+    }
+
+    async function drHandleSend() {
+      if (drState.isSending) return;
+      if (!state.user) { showToast('Login required'); return; }
+      const text = (drEls.message?.value || '').trim();
+      if (!text) return;
+      drEls.message.value = '';
+      await drSubmitMessage(text);
+    }
+
+    async function drHandleRename() {
+      if (!drState.conversationId || !drEls.titleInput) return;
+      const title = drEls.titleInput.value.trim();
+      if (!title) { showToast('Title cannot be empty'); return; }
+      try {
+        await api(`/api/deep-research/conversations/${encodeURIComponent(drState.conversationId)}/title`, {
+          method: 'POST',
+          body: { title }
+        });
+        showToast('Session renamed');
+        await drFetchConversations();
+        drRenderConversations();
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to rename session');
+      }
+    }
+
+    async function drHandleNewSession() {
+      if (!state.spaceId) { showToast('Select a space first'); return; }
+      try {
+        const cid = await drStartConversation();
+        drState.conversationId = cid;
+        drPersistConversationId(cid);
+        await drFetchConversations();
+        await drSelectConversation(cid);
+        if (drEls.titleInput) {
+          drEls.titleInput.value = drGenerateSessionTitle();
+          await drAutoSaveSessionTitle();
+        }
+        showToast('New session ready');
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to start session');
+      }
+    }
+
+    async function drHandleNotebookSubmit(e) {
+      e.preventDefault();
+      if (!drState.conversationId) { showToast('Open a session first'); return; }
+      const title = drEls.notebookTitle?.value.trim() || 'Notebook entry';
+      const content = drEls.notebookContent?.value.trim() || '';
+      if (!content) { showToast('Content required'); return; }
+      try {
+        await api(`/api/deep-research/notebook/${encodeURIComponent(drState.conversationId)}`, {
+          method: 'POST',
+          body: { title, content }
+        });
+        drEls.notebookTitle.value = '';
+        drEls.notebookContent.value = '';
+        await drLoadConversationDetail(drState.conversationId);
+        showToast('Notebook entry added');
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to add note');
+      }
+    }
+
+    async function drDeleteNotebookEntry(entryId) {
+      try {
+        await api(`/api/deep-research/notebook/${encodeURIComponent(entryId)}`, { method: 'DELETE' });
+        await drLoadConversationDetail(drState.conversationId);
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to delete note');
+      }
+    }
+
+    async function drOpenModal() {
+      if (!state.user) {
+        showToast('Login required');
+        return;
+      }
+      if (!drEls.modal || !drEls.backdrop) return;
+      drEls.backdrop.hidden = false;
+      drEls.backdrop.classList.add('open');
+      drEls.modal.hidden = false;
+      drEls.modal.classList.add('open');
+      if (drEls.forceWeb && typeof drEls.forceWeb.checked === 'boolean') {
+        drEls.forceWeb.checked = false;
+      }
+      drState.open = true;
+      drHideAllDrawers();
+      drEls.message?.focus();
+      drSetHeroStatus('Loading sessions…');
+      await drBootstrap();
+      const seed = (document.getElementById('query')?.value || '').trim();
+      if (seed && (!drState.steps || drState.steps.length === 0)) {
+        drEls.message.value = seed;
+        await drSubmitMessage(seed);
+        drEls.message.value = '';
+      }
+    }
+
+    function drCloseModal() {
+      if (!drEls.modal || !drEls.backdrop) return;
+      drEls.backdrop.classList.remove('open');
+      drEls.backdrop.hidden = true;
+      drEls.modal.classList.remove('open');
+      drEls.modal.hidden = true;
+      drState.open = false;
+      drHideAllDrawers();
+      drToggleMenu(false);
+      drAutoSaveSessionTitle();
+    }
+
+    function drResetSpaceContext() {
+      drState.conversationId = null;
+      drPersistConversationId(null);
+      drState.steps = [];
+      drState.notebook = [];
+      drRenderTimeline([]);
+      drRenderNotebook([]);
+      drRenderConversations();
+      drSetHeroStatus('Space switched. Open Deep Research to resume.');
+    }
+
+    async function loadDeepResearchConfig() {
+      try {
+        const cfg = await api('/api/deep-research-config');
+        if (cfg && typeof cfg.followup_autosend === 'boolean') {
+          drState.followupAutoSend = cfg.followup_autosend;
+        }
+      } catch (e) {
+        // ignore (likely unauthenticated)
+      }
+    }
 
     let librarySort = 'newest';
     let libraryView = 'grid';
@@ -2192,11 +3093,13 @@
     document.getElementById('spacesSelect').addEventListener('change', (e) => {
       state.spaceId = parseInt(e.target.value, 10);
       document.getElementById('spaceSelect').value = state.spaceId;
+      drResetSpaceContext();
       loadLibrary();
     });
     document.getElementById('spaceSelect').addEventListener('change', (e) => {
       state.spaceId = parseInt(e.target.value, 10);
       document.getElementById('spacesSelect').value = state.spaceId;
+      drResetSpaceContext();
       loadLibrary();
     });
     document.getElementById('showRegisterLink').addEventListener('click', (e) => {
@@ -2210,8 +3113,120 @@
       document.getElementById('registerCard').hidden = true;
     });
 
+    document.getElementById('drBtn')?.addEventListener('click', () => {
+      drOpenModal().catch(console.error);
+    });
+    drEls.close?.addEventListener('click', () => drCloseModal());
+    drEls.backdrop?.addEventListener('click', () => drCloseModal());
+    drEls.send?.addEventListener('click', () => drHandleSend());
+    drEls.message?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        drHandleSend();
+      }
+    });
+    drEls.newSession?.addEventListener('click', () => drHandleNewSession());
+    drEls.renameBtn?.addEventListener('click', () => drHandleRename());
+    drEls.refreshBtn?.addEventListener('click', () => {
+      drHandleNewSession();
+    });
+    drEls.titleInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        drHandleRename();
+      }
+    });
+    drEls.titleInput?.addEventListener('focus', () => {
+      drEls.renameBtn?.classList.add('visible');
+    });
+    drEls.titleInput?.addEventListener('blur', () => {
+      drEls.renameBtn?.classList.remove('visible');
+      drAutoSaveSessionTitle();
+    });
+    drEls.notebookForm?.addEventListener('submit', drHandleNotebookSubmit);
+    drEls.notebookClear?.addEventListener('click', () => {
+      if (drEls.notebookTitle) drEls.notebookTitle.value = '';
+      if (drEls.notebookContent) drEls.notebookContent.value = '';
+    });
+    drEls.notebookRefresh?.addEventListener('click', () => {
+      if (drState.conversationId) drLoadConversationDetail(drState.conversationId);
+    });
+    drEls.convoList?.addEventListener('click', (e) => {
+      const card = e.target.closest('[data-dr-conversation]');
+      if (card) drSelectConversation(card.dataset.drConversation);
+    });
+    drEls.notebookList?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-dr-delete-note]');
+      if (btn) drDeleteNotebookEntry(btn.getAttribute('data-dr-delete-note'));
+    });
+
+    [drEls.sessionsToggleSecondary].forEach((btn) => {
+      btn?.addEventListener('click', () => drToggleDrawer('sessions'));
+    });
+    [drEls.notebookToggleSecondary].forEach((btn) => {
+      btn?.addEventListener('click', () => drToggleDrawer('notebook'));
+    });
+    drEls.drawerCloseButtons?.forEach((btn) => {
+      btn.addEventListener('click', () => drHideAllDrawers());
+    });
+    drEls.drawerBackdrop?.addEventListener('click', () => drHideAllDrawers());
+    drEls.newSessionDrawerBtn?.addEventListener('click', () => {
+      drHandleNewSession();
+      drHideDrawer('sessions');
+    });
+
+    drEls.menuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      drToggleMenu();
+    });
+    drEls.menuSessions?.addEventListener('click', () => {
+      drToggleMenu(false);
+      drToggleDrawer('sessions');
+    });
+    drEls.menuNotebook?.addEventListener('click', () => {
+      drToggleMenu(false);
+      drToggleDrawer('notebook');
+    });
+    drEls.menuReset?.addEventListener('click', () => {
+      drToggleMenu(false);
+      drHandleNewSession();
+    });
+    drEls.timeline?.addEventListener('click', (e) => {
+      const chip = e.target.closest('.dr-followup-chip');
+      if (!chip || !drEls.message) return;
+      const text = (chip.textContent || '').trim();
+      if (!text || drState.isSending) return;
+      drOpenFollowupModal(text);
+    });
+    const drSendFollowup = async () => {
+      if (drState.isSending) return;
+      const question = drState.pendingFollowup || '';
+      const answer = (drEls.followupAnswer?.value || '').trim();
+      if (!question) { showToast('No follow-up selected'); return; }
+      if (!answer) { showToast('Please add your response'); return; }
+      drCloseFollowupModal();
+      const combined = `Follow-up question: ${question}\nUser response: ${answer}`;
+      await drSubmitMessage(combined);
+    };
+    drEls.followupSend?.addEventListener('click', drSendFollowup);
+    drEls.followupAnswer?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        drSendFollowup();
+      }
+    });
+    drEls.followupCancel?.addEventListener('click', () => drCloseFollowupModal());
+    drEls.followupClose?.addEventListener('click', () => drCloseFollowupModal());
+    drEls.followupBackdrop?.addEventListener('click', () => drCloseFollowupModal());
+    document.addEventListener('click', (e) => {
+      if (!drEls.menuPanel || drEls.menuPanel.hidden) return;
+      if (drEls.menuPanel.contains(e.target) || drEls.menuBtn?.contains(e.target)) return;
+      drToggleMenu(false);
+    });
+
     window.addEventListener('DOMContentLoaded', () => {
       initUser();
+      loadDeepResearchConfig();
       const storedContext = localStorage.getItem('sqlContext') || 'user';
       const contextUser = document.getElementById('sqlContextUser');
       const contextSystem = document.getElementById('sqlContextSystem');
@@ -2249,6 +3264,18 @@
         textMemoryToggle.addEventListener('change', () => {
           localStorage.setItem('textPersistentMemory', textMemoryToggle.checked ? 'true' : 'false');
         });
+      }
+      const drMemoryToggle = document.getElementById('drPersistentMemory');
+      if (drMemoryToggle && persistentMemoryConfig.deepResearchEnabled) {
+        const stored = localStorage.getItem('drPersistentMemory');
+        if (stored !== null) {
+          drMemoryToggle.checked = stored === 'true';
+        }
+        drMemoryToggle.addEventListener('change', () => {
+          localStorage.setItem('drPersistentMemory', drMemoryToggle.checked ? 'true' : 'false');
+        });
+      } else if (drMemoryToggle) {
+        drMemoryToggle.checked = false;
       }
       const imageMemoryToggle = document.getElementById('imagePersistentMemory');
       if (imageMemoryToggle) {
