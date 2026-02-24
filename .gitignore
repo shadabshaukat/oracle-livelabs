@@ -39,6 +39,7 @@ coverage.xml
 .pyre/
 .pytype/
 .ipynb_checkpoints/
+uv.lock
 
 # Python environments and build outputs
 .venv/
