@@ -25,7 +25,7 @@ This repository contains two related stacks that together deliver an enterprise 
 ## Architecture Overview
 - Terraform provisions the network and OCI PostgreSQL. Optional compute can be created.
 - The app connects to OCI PostgreSQL and self‑manages schema and indexes on startup (CREATE IF NOT EXISTS).
-- Files uploaded via UI/API are saved locally under `storage/uploads/YYYY/MM/DD/HHMMSS/filename`. When configured, they are also uploaded to OCI Object Storage with the same object path; the object URL is stored in document metadata and rendered as a link in the UI References panel.
+- Files uploaded via UI/API are saved locally under `storage/uploads/YYYY/MM/DD/HHMMSS/filename`. When configured, they are also uploaded to OCI Object Storage with the same object path; the **object identifiers** (provider/bucket/object name) are stored in document metadata and downloads/thumbnails are streamed by the app via the OCI SDK (no PAR URLs).
 
 ### End-to-end Workflow (Text + Image)
 1) **Upload** (UI or API) → files stored locally and optionally in OCI Object Storage.
@@ -135,8 +135,12 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 
 ### Upload Behavior
 - Files are saved to `storage/uploads/YYYY/MM/DD/HHMMSS/<basename>`.
-- If `STORAGE_BACKEND` includes `oci` and `OCI_OS_BUCKET_NAME` is set, the same date/time path is uploaded to Object Storage and the URL is saved in document metadata. The UI References panel will display a clickable link when the Object Storage URL is available.
+- If `STORAGE_BACKEND` includes `oci` and `OCI_OS_BUCKET_NAME` is set, the same date/time path is uploaded to Object Storage and the object identifiers are stored in the DB. The app streams downloads/thumbnails via SDK-backed endpoints (no PAR links).
 - Image uploads generate thumbnails for faster UI rendering in Library and Image Search.
+- Upload limits are enforced per file and per space:
+  - `MAX_UPLOAD_SIZE_MB` (per-file size cap)
+  - `MAX_FILES_PER_SPACE` (maximum files in a space)
+  - `ALLOWED_UPLOAD_EXTENSIONS` (comma-separated allowlist; blank allows all)
 
 ### Validating the System
 - Health: `GET /api/health` → `{ "status": "ok" }`

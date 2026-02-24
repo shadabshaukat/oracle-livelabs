@@ -140,8 +140,12 @@ Environment variables (see .env.example):
 - Storage backend:
   - STORAGE_BACKEND=local|oci|both (default local)
   - OCI_OS_BUCKET_NAME (required when STORAGE_BACKEND includes 'oci')
-  - Files are saved locally under storage/uploads/YYYY/MM/DD/HHMMSS/<filename>; when using 'oci' or 'both', the same object path is used in OCI Object Storage and its URL is stored in document metadata as object_url. The UI shows a clickable link in References when available.
-  - OCI-only streaming: When STORAGE_BACKEND=oci, uploads stream directly to OCI without loading the whole file in RAM. A SpooledTemporaryFile is used for ingestion (in-memory up to 2MB, then disk; auto-deleted after use) for memory safety with large files.
+- Files are saved locally under storage/uploads/YYYY/MM/DD/HHMMSS/<filename>; when using 'oci' or 'both', the same object path is used in OCI Object Storage and the **object identifiers** (provider/bucket/object name) are stored in document metadata. Downloads/thumbnails are streamed by the app via the OCI SDK (no PAR URLs).
+- OCI-only streaming: When STORAGE_BACKEND=oci, uploads stream directly to OCI without loading the whole file in RAM. A SpooledTemporaryFile is used for ingestion (in-memory up to 2MB, then disk; auto-deleted after use) for memory safety with large files.
+- Upload limits:
+  - MAX_UPLOAD_SIZE_MB (per-file size cap)
+  - MAX_FILES_PER_SPACE (maximum files in a space)
+  - ALLOWED_UPLOAD_EXTENSIONS (comma-separated allowlist; blank allows all)
 - RAG LLM provider:
   - OpenAI: set LLM_PROVIDER=openai and OPENAI_API_KEY
   - OCI GenAI (preferred for this app): set LLM_PROVIDER=oci and configure:

@@ -231,6 +231,19 @@
   <div id="toast" class="toast" hidden></div>
 
   <script>
+    const uploadConfig = (() => {
+      const rawExts = "{{ (upload_allowed_exts or '').replace('\"', '\\\"') }}";
+      const list = rawExts
+        .split(',')
+        .map(e => e.trim().toLowerCase())
+        .filter(Boolean)
+        .map(e => e.startsWith('.') ? e : `.${e}`);
+      return {
+        maxUploadSizeMb: Number("{{ upload_max_mb }}") || 50,
+        maxFilesPerSpace: Number("{{ upload_max_files }}") || 100,
+        allowedExtensions: list.length ? list : ['.pdf','.docx','.doc','.txt','.html','.htm','.md','.csv','.json','.xml','.pptx','.xlsx','.xls','.png','.jpg','.jpeg','.gif','.webp','.bmp']
+      };
+    })();
     // Theme toggle
     (function(){
       const btn = document.getElementById('themeBtn');
@@ -257,6 +270,35 @@
       t.textContent = msg;
       t.hidden = false;
       setTimeout(() => { t.hidden = true; t.textContent = ''; }, 3000);
+    }
+
+    function normalizeExtension(ext) {
+      if (!ext) return '';
+      const out = ext.toLowerCase();
+      return out.startsWith('.') ? out : `.${out}`;
+    }
+
+    function isAllowedFile(file) {
+      const name = file?.name || '';
+      const ext = normalizeExtension(name.includes('.') ? name.split('.').pop() : '');
+      return uploadConfig.allowedExtensions.includes(ext);
+    }
+
+    function validateUploadSelection(files) {
+      const maxFiles = uploadConfig.maxFilesPerSpace;
+      if (maxFiles > 0 && files.length > maxFiles) {
+        return `You can upload up to ${maxFiles} file(s) per space.`;
+      }
+      for (const f of files) {
+        if (!isAllowedFile(f)) {
+          return `Unsupported file type: ${f.name}`;
+        }
+        const maxBytes = uploadConfig.maxUploadSizeMb * 1024 * 1024;
+        if (f.size > maxBytes) {
+          return `${f.name} exceeds ${uploadConfig.maxUploadSizeMb} MB limit.`;
+        }
+      }
+      return '';
     }
 
     function escapeHtml(s) {
@@ -596,6 +638,11 @@
     let droppedFiles = [];
 
     function addFilesToList(fileList) {
+      const err = validateUploadSelection(fileList);
+      if (err) {
+        showToast(err);
+        return;
+      }
       for (const f of fileList) droppedFiles.push(f);
       const dz = document.getElementById('dropzone');
       if (dz) dz.textContent = `${droppedFiles.length} file(s) ready`;
@@ -652,6 +699,13 @@
     function bindFileInput(el) {
       if (!el) return;
       el.addEventListener('change', () => {
+        const chosen = el.files ? Array.from(el.files) : [];
+        const err = validateUploadSelection(chosen);
+        if (err) {
+          el.value = '';
+          showToast(err);
+          return;
+        }
         const count = el.files ? el.files.length : 0;
         const dz = document.getElementById('dropzone');
         if (dz) dz.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
@@ -689,6 +743,12 @@
       const selA = filesInput?.files ? Array.from(filesInput.files) : [];
       const allFiles = [...selA, ...droppedFiles];
       if (!allFiles.length) { showToast('No files selected'); return; }
+
+      const validationError = validateUploadSelection(allFiles);
+      if (validationError) {
+        showToast(validationError);
+        return;
+      }
 
       list.innerHTML = '';
       list.classList.toggle('library-list', libraryView === 'list');
@@ -846,6 +906,25 @@
           showToast('Upload + processing finished');
           // Clear dropped files after run
           droppedFiles = [];
+          if (filesInput) filesInput.value = '';
+          if (list) list.innerHTML = '';
+          const listRow = document.getElementById('uploadListRow');
+          if (listRow) listRow.hidden = true;
+          const uploadToggle = document.getElementById('uploadToggle');
+          const uploadBody = document.getElementById('uploadBody');
+          if (uploadBody && uploadToggle && !uploadBody.hidden) {
+            uploadBody.hidden = true;
+            uploadToggle.setAttribute('aria-expanded', 'false');
+            uploadToggle.classList.remove('is-open');
+          }
+          const libraryBody = document.getElementById('libraryBody');
+          const libraryToggle = document.getElementById('libraryToggle');
+          if (libraryBody && libraryToggle && libraryBody.hidden) {
+            libraryBody.hidden = false;
+            libraryToggle.setAttribute('aria-expanded', 'true');
+            libraryToggle.classList.add('is-open');
+          }
+          loadLibrary();
         }
       }
 
