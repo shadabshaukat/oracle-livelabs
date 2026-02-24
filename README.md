@@ -12,6 +12,8 @@ This repository contains two related stacks that together deliver an enterprise 
    - FastAPI backend + minimalist Jinja UI
    - Upload & ingestion of PDF/HTML/TXT/DOCX with robust parsing and chunking, vector embeddings, and full‑text indexing
    - Multi‑mode retrieval: Semantic (pgvector), Full‑Text (tsvector), Hybrid (RRF fusion), and RAG (OpenAI or OCI GenAI)
+   - Deep Research (DR) sessions with notebook, follow-ups, and optional web search
+   - SQL Search (NL2SQL), search history auditing, and persistent memory across text/SQL/DR
    - Dual storage backends for uploads: local file system and/or OCI Object Storage, with timestamped folder structure
 
 
@@ -39,6 +41,7 @@ This repository contains two related stacks that together deliver an enterprise 
    - Full‑text: PostgreSQL `tsvector` + GIN index.
    - Hybrid: Reciprocal Rank Fusion of semantic + full‑text results.
    - RAG: uses Hybrid results as context; optional LLM synthesis.
+   - Deep Research: persistent conversations, follow-ups, notebook pins, optional web search.
 5) **Render** → UI shows LLM response (if used), search matches, references, and image cards.
 
 
@@ -118,6 +121,10 @@ Key environment variables (see `search-app/.env.example` and `search-app/README.
   - OCI credentials (config file or API key envs) for Object Storage
 - RAG LLM provider:
   - `LLM_PROVIDER=oci` or `openai`, with corresponding credentials
+- Persistent memory + DR:
+  - `TEXT_PERSISTENT_MEMORY_ENABLED`, `SQL_PERSISTENT_MEMORY_ENABLED`, `IMAGE_PERSISTENT_MEMORY_ENABLED`, `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`
+  - `PERSISTENT_MEMORY_TOP_K`, `PERSISTENT_MEMORY_MAX_CHARS`, `PERSISTENT_MEMORY_SUMMARY_MAX_CHARS`
+- LLM cache: `LLM_CACHE_TTL_SECONDS` (in-process cache)
 
 2) Install dependencies and run the app
 ```bash
@@ -154,11 +161,19 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - Full‑Text: PostgreSQL FTS (GIN) with `ts_rank_cd`
 - Hybrid: Reciprocal Rank Fusion over semantic and full‑text results
 - RAG: Optional LLM synthesis using OpenAI or OCI GenAI
+- SQL Search (NL2SQL) for analysts/admins
+- Deep Research for multi-step investigations
 
 ### Image Search Flow
 - Images are embedded with OpenCLIP and stored in PostgreSQL.
 - Image search accepts a text query, tags, or a reference image.
 - Results include `thumbnail_url` for the UI (served by `/api/image-assets/{id}/thumbnail`) and metadata tags/captions.
+
+### Deep Research Flow
+- Start from the AI icon to open the DR modal and ask a question.
+- Sessions and notebook pins persist per space in PostgreSQL.
+- Follow-up questions open a modal for response entry (Enter-to-send).
+- DR activity logs into Search History with `activity_type=deep_research`.
 
 
 ## Typical End‑to‑End Flow
@@ -175,6 +190,8 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - Uploads to OCI: verify `STORAGE_BACKEND` and `OCI_OS_BUCKET_NAME`; ensure OCI credentials are available
 - Authentication: Basic Auth protects `/` and `/api`
 - Images not rendering: confirm `/api/image-assets/{image_id}/thumbnail` returns 200 and that you are logged in (session cookies).
+- Deep Research tables missing: run `psql "$DATABASE_URL" -f schema_v3.sql` or restart the app to let `app/db.py` create DR tables.
+- Valkey/Redis: cache removed; delete any leftover Valkey env vars and rely on OCI PostgreSQL.
 
 ## New Features in V2 ##
 

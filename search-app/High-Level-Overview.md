@@ -4,6 +4,7 @@ High-level overview
 
   - Infrastructure: oci_postgres_tf_stack, a Terraform/Oracle Resource Manager (ORM) deployable module that provisions OCI networking, an OCI PostgreSQL DB System, optionally a Compute VM, and an Object Storage bucket for uploads.
   - Application: search-app, a FastAPI service with a minimalist Jinja UI for document upload, ingestion (text extraction + chunking + embedding), and multi-mode retrieval (semantic with pgvector, full-text with PostgreSQL GIN, hybrid via RRF, and optional RAG using OCI GenAI or OpenAI). Security is via Basic Auth.
+  - Application: search-app also includes SQL Search (NL2SQL), Search History audit logs, and Deep Research (DR) sessions with persistent memory.
 
 Repo structure and roles
 
@@ -40,6 +41,8 @@ Repo structure and roles
       - GET /api/doc-summary?doc_id=: doc/file summary and chunk count.
       - POST /api/upload (multipart files[]): saves file(s) and ingests (extract, chunk, embed, store). Returns per-file doc_id and chunk count. If Storage backend includes OCI, uploads a copy to Object Storage and stores object_url in document metadata.
       - POST /api/search: accepts {query, mode: semantic|fulltext|hybrid|rag, top_k}. For rag, returns answer + hits + references (file name/type, chunk anchor, and object URL when present).
+      - Deep Research: /api/deep-research/start, /api/deep-research/ask, /api/deep-research/conversations, /api/deep-research/notebook/{conversation_id}.
+      - Search history: /api/search-history and /api/search-history/{session_id}.
       - GET/POST /api/llm-debug and POST /api/llm-test: connectivity and response-shape diagnostics for OCI GenAI or OpenAI.
       - GET /api/llm-config: masked snapshot of LLM-related configuration.
 
@@ -58,6 +61,9 @@ Repo structure and roles
 
       - documents(id, source_path, source_type, title, metadata JSONB, created_at).
       - chunks(id, document_id, chunk_index, content, content_tsv GENERATED ALWAYS AS to_tsvector(config, content), content_chars, embedding vector(dim), embedding_model, created_at).
+      - search_sessions + search_activity (session history + audit payloads).
+      - deep_research_conversations, deep_research_steps, deep_research_notebook_entries, conversation_external_docs.
+      - memory_events (persistent memory across text/sql/DR).
 
     - Indexes: unique(doc_id, chunk_index), GIN(content_tsv), IVFFlat(embedding opclass depends on cosine/l2/ip) WITH (lists = PGVECTOR_LISTS). Runtime ivfflat.probes is set per query.
 
@@ -89,6 +95,8 @@ Repo structure and roles
     - Search experience with a clean hero-like landing, search bar, settings (mode/top_k/auto-search debounce), result list with badges for distance/rank, and an Answer panel that shows LLM vs context-only mode.
     - References panel (for RAG) lists top sources with optional link to Object Storage URL if present in metadata.
     - Upload experience supports drag & drop folders/files, directory selection, per-file progress bars with concurrency (4), retries/backoff, and shows per-file processed summary when server responds.
+    - Deep Research modal with session list, notebook, follow-up questions modal, and optional persistent memory toggle.
+    - Search History accordion shows per-session summaries, filters, and audit payloads.
 
   - app/auth.py: BasicAuthMiddleware protecting root and API/docs. Defaults in .env.example are admin/letmein; change these.
 
@@ -109,6 +117,7 @@ Data model and flow
   - fulltext: tsquery against content_tsv with GIN, ranked.
   - hybrid: RRF fusion of the above.
   - rag: perform hybrid/selected search → assemble context → call LLM (OCI or OpenAI) → return synthesized answer with references to top chunks/files. References include file_name/type and optional Object Storage link.
+    - Deep Research and SQL Search now share the persistent memory store for retrieval augmentation.
 
 - Readiness/health: endpoints check DB availability, existence of extensions, tables, and indexes.
 
@@ -136,6 +145,7 @@ Configuration and deployment
 Security considerations
 
 - Authentication: Basic Auth middleware protects both UI and API. Ensure credentials differ from example defaults.
+- Cache: Valkey/Redis removed in V3; LLM caching uses in-process memory with TTL.
 - Secrets: Never commit real .env. Use OCI Vault/secret manager or environment variables in production; avoid putting sensitive DB or OCI values in Git.
 - CORS: allow_cors defaults to true; lock this down for production.
 - Network: Terraform config isolates PostgreSQL in private subnets and restricts 5432 via NSG; compute can be public/private per config. For production, front FastAPI with TLS-terminating proxy/WAF.

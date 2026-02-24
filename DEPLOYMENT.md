@@ -53,6 +53,8 @@ Update `.env` with:
 - `STORAGE_BACKEND=local|oci|s3|both`
 - `OCI_OS_BUCKET_NAME` if using OCI storage
 - Upload limits: `MAX_UPLOAD_SIZE_MB` (per-file), `MAX_FILES_PER_SPACE`, `ALLOWED_UPLOAD_EXTENSIONS`
+- Deep Research + memory: `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`, `TEXT_PERSISTENT_MEMORY_ENABLED`, `SQL_PERSISTENT_MEMORY_ENABLED`, `IMAGE_PERSISTENT_MEMORY_ENABLED`
+- LLM cache: `LLM_CACHE_TTL_SECONDS` (in-process cache)
 
 ### Install + Run
 
@@ -83,6 +85,7 @@ These install:
 4) **Upload** an image and confirm:
    - Library shows thumbnail
    - Image search returns cards
+5) **Deep Research**: open the DR modal and ask a question; confirm sessions + history logging.
 
 ## 5) Recommended Production Patterns
 
@@ -146,6 +149,7 @@ To refine this:
 - **Search errors**: check DB connectivity + pgvector extension.
 - **Image search errors**: verify OpenCLIP deps and `/api/image-assets/{id}/thumbnail`.
 - **RAG errors**: verify OCI GenAI credentials and `/api/llm-test`.
+- **Deep Research tables missing**: run `psql "$DATABASE_URL" -f schema_v3.sql` or restart to let `app/db.py` create DR tables.
 
 ## Security Hardening Checklist
 
@@ -155,4 +159,5 @@ To refine this:
 - Restrict DB access to private subnet/NSG rules.
 - Enable HTTPS in front of FastAPI (NGINX/OCI LB).
 - Limit upload size (`MAX_UPLOAD_SIZE_MB` per file), validate file types, and cap per-space uploads (`MAX_FILES_PER_SPACE`).
+- Remove any Valkey/Redis configs; the platform is Postgres-only for persistence.
 - Enable OS-level firewall; only expose port 8000 via trusted networks.

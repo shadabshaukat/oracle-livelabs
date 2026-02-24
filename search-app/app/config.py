@@ -115,6 +115,8 @@ class Settings:
     pgvector_lists: int = int(os.getenv("PGVECTOR_LISTS", "1000"))  # tune for 10M (~sqrt(n))
     pgvector_probes: int = int(os.getenv("PGVECTOR_PROBES", "10"))  # runtime probes
 
+    llm_cache_ttl_seconds: int = int(os.getenv("LLM_CACHE_TTL_SECONDS", "900"))
+
     # Full-text search
     fts_config: str = os.getenv("FTS_CONFIG", "english")
 
@@ -128,6 +130,14 @@ class Settings:
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "1024"))
+
+    # AWS Bedrock (optional)
+    aws_region: Optional[str] = os.getenv("AWS_REGION")
+    aws_bedrock_model_id: Optional[str] = os.getenv("AWS_BEDROCK_MODEL_ID")
+
+    # Ollama (optional)
+    ollama_host: Optional[str] = os.getenv("OLLAMA_HOST")
+    ollama_model: Optional[str] = os.getenv("OLLAMA_MODEL")
 
     # OCI configuration
     oci_region: Optional[str] = os.getenv("OCI_REGION")
@@ -158,6 +168,33 @@ class Settings:
         "You are an expert PostgreSQL (v14-v18) SQL assistant. Produce accurate, executable SELECT-only SQL and never hallucinate tables or columns."
         " Use only the provided schema/context. If needed, re-check the schema before answering.",
     )
+
+    # Deep Research feature flags
+    dr_rerank_enable: bool = _get_bool("DR_RERANK_ENABLE", True)
+    dr_topic_lock_default: bool = _get_bool("DR_TOPIC_LOCK_DEFAULT", False)
+    deep_research_timeout_seconds: int = int(os.getenv("DEEP_RESEARCH_TIMEOUT_SECONDS", "120"))
+    deep_research_local_top_k: int = int(os.getenv("DEEP_RESEARCH_LOCAL_TOP_K", "15"))
+    deep_research_web_top_k: int = int(os.getenv("DEEP_RESEARCH_WEB_TOP_K", "15"))
+    deep_research_url_max_depth: int = int(os.getenv("DEEP_RESEARCH_URL_MAX_DEPTH", "2"))
+    deep_research_url_max_pages: int = int(os.getenv("DEEP_RESEARCH_URL_MAX_PAGES", "12"))
+    deep_research_retry_loops: int = int(os.getenv("DEEP_RESEARCH_RETRY_LOOPS", "1"))
+    deep_research_confidence_threshold: float = float(os.getenv("DEEP_RESEARCH_CONFIDENCE_THRESHOLD", "0.45"))
+    deep_research_missing_concept_loops: int = int(os.getenv("DEEP_RESEARCH_MISSING_CONCEPT_LOOPS", "1"))
+    deep_research_missing_concept_top_k: int = int(os.getenv("DEEP_RESEARCH_MISSING_CONCEPT_TOP_K", "6"))
+    deep_research_recency_boost: float = float(os.getenv("DEEP_RESEARCH_RECENCY_BOOST", "0.15"))
+    deep_research_recency_half_life_days: float = float(os.getenv("DEEP_RESEARCH_RECENCY_HALF_LIFE_DAYS", "30"))
+    deep_research_followup_enable: bool = _get_bool("DEEP_RESEARCH_FOLLOWUP_ENABLE", True)
+    deep_research_followup_threshold: float = float(os.getenv("DEEP_RESEARCH_FOLLOWUP_THRESHOLD", "0.4"))
+    deep_research_followup_max_questions: int = int(os.getenv("DEEP_RESEARCH_FOLLOWUP_MAX_QUESTIONS", "2"))
+    deep_research_followup_autosend: bool = _get_bool("DEEP_RESEARCH_FOLLOWUP_AUTOSEND", True)
+    deep_research_followup_relevance_min: float = float(os.getenv("DEEP_RESEARCH_FOLLOWUP_RELEVANCE_MIN", "0.08"))
+    deep_research_persistent_memory_enabled: bool = _get_bool("DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED", False)
+    deep_research_persistent_memory_top_k: int = int(os.getenv("DEEP_RESEARCH_PERSISTENT_MEMORY_TOP_K", "8"))
+    deep_research_persistent_memory_max_chars: int = int(os.getenv("DEEP_RESEARCH_PERSISTENT_MEMORY_MAX_CHARS", "6000"))
+    deep_research_memory_rollup_enabled: bool = _get_bool("DEEP_RESEARCH_MEMORY_ROLLUP_ENABLED", True)
+    deep_research_memory_rollup_every_n: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_EVERY_N", "6"))
+    deep_research_memory_rollup_min_messages: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_MIN_MESSAGES", "6"))
+    deep_research_memory_rollup_max_chars: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_MAX_CHARS", "12000"))
 
 
 def build_database_url(s: Settings) -> str:

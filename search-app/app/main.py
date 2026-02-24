@@ -29,8 +29,19 @@ from .embeddings import get_model, embed_texts
 from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers, generate_session_id
 from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space, get_user_by_id
 from .vision_embeddings import embed_image_paths, embed_image_texts, VisionModelUnavailable
-from .oci_llm import oci_chat_completion
-from .pgvector_utils import to_vec_literal
+from .deep_research import start_conversation as dr_start, ask as dr_ask
+from .deep_research_store import (
+    list_conversations as dr_list_conversations,
+    get_conversation_detail as dr_get_conversation_detail,
+    update_conversation_title as dr_update_conversation_title,
+    add_notebook_entry as dr_add_notebook_entry,
+    delete_notebook_entry as dr_delete_notebook_entry,
+)
+from .memory_store import (
+    _fetch_persistent_memory,
+    _build_persistent_memory_context,
+    _persist_memory_event,
+)
 
 logger = logging.getLogger("searchapp")
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
@@ -92,195 +103,10 @@ async def index(request: Request):
             "sql_persistent_memory_enabled": settings.sql_persistent_memory_enabled,
             "text_persistent_memory_enabled": settings.text_persistent_memory_enabled,
             "image_persistent_memory_enabled": settings.image_persistent_memory_enabled,
+            "deep_research_persistent_memory_enabled": settings.deep_research_persistent_memory_enabled,
             "sql_system_prompt": settings.sql_system_prompt,
         },
     )
-
-
-def _memory_vector_operator() -> str:
-    metric = settings.pgvector_metric.lower()
-    if metric == "cosine":
-        return "<=>"
-    if metric == "l2":
-        return "<->"
-    if metric == "ip":
-        return "<#>"
-    raise ValueError("Invalid PGVECTOR_METRIC")
-
-
-def _summarize_memory_text(text: str, max_chars: int) -> str:
-    if not text:
-        return ""
-    trimmed = text.strip()
-    if len(trimmed) <= max_chars:
-        return trimmed
-    if settings.llm_provider == "openai" and settings.openai_api_key:
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=settings.openai_api_key)
-            prompt = (
-                "Summarize the following memory into a concise, factual recap suitable for SQL/Search context. "
-                f"Limit to {max_chars} characters.\n\n"
-                f"Memory:\n{trimmed[:12000]}"
-            )
-            resp = client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=400,
-            )
-            out = (resp.choices[0].message.content or "").strip()
-            if out:
-                return out[:max_chars]
-        except Exception:
-            pass
-    if settings.llm_provider == "oci":
-        try:
-            prompt = (
-                "Summarize the following memory into a concise, factual recap suitable for SQL/Search context. "
-                f"Limit to {max_chars} characters."
-            )
-            out = oci_chat_completion(prompt, trimmed[:12000]) or ""
-            out = out.strip()
-            if out:
-                return out[:max_chars]
-        except Exception:
-            pass
-    return trimmed[:max_chars]
-
-
-def _format_memory_entry(entry: Dict[str, Any]) -> str:
-    if entry.get("summary"):
-        return str(entry["summary"])
-    parts: List[str] = []
-    if entry.get("query_text"):
-        parts.append(f"Q: {entry['query_text']}")
-    if entry.get("generated_sql"):
-        parts.append(f"SQL: {entry['generated_sql']}")
-    if entry.get("response_text") and not entry.get("generated_sql"):
-        parts.append(f"A: {entry['response_text']}")
-    return "\n".join(parts).strip()
-
-
-def _build_persistent_memory_context(entries: List[Dict[str, Any]], max_chars: int) -> str:
-    if not entries:
-        return ""
-    blocks = []
-    total = 0
-    for entry in entries:
-        block = _format_memory_entry(entry)
-        if not block:
-            continue
-        if total + len(block) > max_chars:
-            remaining = max_chars - total
-            if remaining > 0:
-                blocks.append(block[:remaining])
-                total += remaining
-            break
-        blocks.append(block)
-        total += len(block) + 2
-    return "\n\n".join(blocks).strip()
-
-
-def _fetch_persistent_memory(space_id: int, memory_type: str, query_text: str) -> List[Dict[str, Any]]:
-    top_k = max(1, int(settings.persistent_memory_top_k))
-    op = _memory_vector_operator()
-    embedding = None
-    if query_text:
-        try:
-            embedding = embed_texts([query_text])[0]
-        except Exception:
-            embedding = None
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            if embedding is not None:
-                cur.execute(
-                    f"""
-                    SELECT id, query_text, response_text, generated_sql, summary
-                    FROM memory_events
-                    WHERE space_id = %s
-                      AND memory_type = %s
-                      AND rating = 1
-                    ORDER BY embedding {op} %s::vector ASC NULLS LAST, created_at DESC
-                    LIMIT %s
-                    """,
-                    (space_id, memory_type, to_vec_literal(embedding), top_k),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, query_text, response_text, generated_sql, summary
-                    FROM memory_events
-                    WHERE space_id = %s
-                      AND memory_type = %s
-                      AND rating = 1
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    (space_id, memory_type, top_k),
-                )
-            rows = cur.fetchall()
-    return [
-        {
-            "id": r[0],
-            "query_text": r[1] or "",
-            "response_text": r[2] or "",
-            "generated_sql": r[3] or "",
-            "summary": r[4] or "",
-        }
-        for r in rows
-    ]
-
-
-def _persist_memory_event(
-    *,
-    space_id: int,
-    user_id: int,
-    memory_type: str,
-    query_text: str,
-    response_text: str = "",
-    generated_sql: str = "",
-    columns: Optional[List[str]] = None,
-    result_sample: Optional[List[Dict[str, Any]]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Optional[int]:
-    payload_text = "\n".join([query_text or "", generated_sql or "", response_text or ""]).strip()
-    summary_text = ""
-    if payload_text:
-        summary_text = _summarize_memory_text(payload_text, int(settings.persistent_memory_summary_max_chars))
-    embedding = None
-    try:
-        if payload_text:
-            embedding = embed_texts([payload_text])[0]
-    except Exception:
-        embedding = None
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO memory_events
-                (space_id, user_id, memory_type, query_text, response_text, generated_sql, columns, result_sample, metadata, summary, embedding, embedding_model)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::vector, %s)
-                RETURNING id
-                """,
-                (
-                    space_id,
-                    user_id,
-                    memory_type,
-                    query_text or None,
-                    response_text or None,
-                    generated_sql or None,
-                    json.dumps(columns or []),
-                    json.dumps(result_sample or []),
-                    json.dumps(metadata or {}),
-                    summary_text or None,
-                    to_vec_literal(embedding) if embedding is not None else None,
-                    settings.embedding_model_name,
-                ),
-            )
-            row = cur.fetchone()
-            return int(row[0]) if row else None
 
 
 def _json_dumps(value: Any) -> str:
@@ -1622,6 +1448,185 @@ async def llm_test(payload: Dict[str, Any] | None = None):
         "error": error,
         "chat_ok": chat_ok,
         "text_ok": text_ok,
+    }
+
+
+@app.post("/api/deep-research/start")
+async def api_dr_start(request: Request, payload: Dict[str, Any] | None = None):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    sid = None
+    if payload and payload.get("space_id") is not None:
+        try:
+            sid = int(payload.get("space_id"))
+        except Exception:
+            sid = None
+    if sid is None:
+        sid = get_default_space_id(uid)
+    cid = dr_start(uid, sid)
+    return {"conversation_id": cid}
+
+
+@app.post("/api/deep-research/ask")
+async def api_dr_ask(request: Request, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    message = (payload or {}).get("message") or ""
+    conversation_id = (payload or {}).get("conversation_id") or ""
+    provider = (payload or {}).get("llm_provider") or None
+    sid = payload.get("space_id")
+    sid = int(sid) if sid is not None else get_default_space_id(uid)
+    if not conversation_id:
+        return JSONResponse(status_code=400, content={"error": "conversation_id required"})
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "message required"})
+    force_web = bool(payload.get("force_web"))
+    urls = payload.get("urls")
+    if isinstance(urls, str):
+        urls = [urls]
+    if isinstance(urls, (list, tuple)):
+        urls = [str(u) for u in urls if u]
+    else:
+        urls = []
+    persistent_memory_requested = _extract_bool(payload.get("persistent_memory"))
+    try:
+        out = dr_ask(
+            uid,
+            sid,
+            conversation_id,
+            message,
+            provider_override=provider,
+            force_web=force_web,
+            urls=urls,
+            persistent_memory=persistent_memory_requested,
+        )
+        summary = f"Deep Research · {message[:120]}" if message else "Deep Research"
+        session_name = (message or "").strip()[:80] or None
+        request_payload = {
+            "message": message,
+            "conversation_id": conversation_id,
+            "space_id": sid,
+            "force_web": force_web,
+            "urls": urls,
+            "persistent_memory": persistent_memory_requested,
+            "user": {"id": uid, "email": user.get("email"), "role": user.get("role")},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        _log_search_activity(
+            user=user,
+            space_id=sid,
+            activity_type="deep_research",
+            request_payload=request_payload,
+            response_payload=out,
+            summary=summary,
+            session_name=session_name,
+            request=request,
+        )
+        return out
+    except Exception as e:
+        logger.exception("DR ask failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/deep-research/conversations")
+async def api_dr_conversations(request: Request, space_id: int | None = None):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        items = dr_list_conversations(uid, int(space_id) if space_id is not None else None)
+        return {"conversations": items}
+    except Exception as e:
+        logger.exception("DR conversations list failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "failed to list conversations"})
+
+
+@app.get("/api/deep-research/conversations/{conversation_id}")
+async def api_dr_conversation_detail(request: Request, conversation_id: str):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        detail = dr_get_conversation_detail(uid, conversation_id)
+        return detail
+    except PermissionError:
+        return JSONResponse(status_code=404, content={"error": "conversation not found"})
+    except Exception as e:
+        logger.exception("DR conversation detail failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "failed to load conversation"})
+
+
+@app.post("/api/deep-research/conversations/{conversation_id}/title")
+async def api_dr_conversation_title(request: Request, conversation_id: str, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    title = (payload or {}).get("title")
+    if not title or not str(title).strip():
+        return JSONResponse(status_code=400, content={"error": "title required"})
+    try:
+        dr_update_conversation_title(uid, conversation_id, str(title).strip())
+        return {"ok": True}
+    except PermissionError:
+        return JSONResponse(status_code=404, content={"error": "conversation not found"})
+    except Exception as e:
+        logger.exception("DR conversation title update failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "failed to update title"})
+
+
+@app.post("/api/deep-research/notebook/{conversation_id}")
+async def api_dr_notebook_add(request: Request, conversation_id: str, payload: Dict[str, Any]):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    title = (payload or {}).get("title") or "Notebook entry"
+    content = (payload or {}).get("content")
+    source = (payload or {}).get("source")
+    if not content or not str(content).strip():
+        return JSONResponse(status_code=400, content={"error": "content required"})
+    try:
+        entry = dr_add_notebook_entry(uid, conversation_id, str(title).strip(), str(content).strip(), source if isinstance(source, dict) else None)
+        return entry
+    except PermissionError:
+        return JSONResponse(status_code=404, content={"error": "conversation not found"})
+    except Exception as e:
+        logger.exception("DR notebook add failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "failed to add entry"})
+
+
+@app.delete("/api/deep-research/notebook/{entry_id}")
+async def api_dr_notebook_delete(request: Request, entry_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        deleted = dr_delete_notebook_entry(uid, int(entry_id))
+        if not deleted:
+            return JSONResponse(status_code=404, content={"error": "entry not found"})
+        return {"ok": True}
+    except PermissionError:
+        return JSONResponse(status_code=404, content={"error": "entry not found"})
+    except Exception as e:
+        logger.exception("DR notebook delete failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": "failed to delete entry"})
+
+
+@app.get("/api/deep-research-config")
+async def get_deep_research_config(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    return {
+        "followup_autosend": bool(settings.deep_research_followup_autosend),
     }
 
 

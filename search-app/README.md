@@ -20,6 +20,7 @@ An enterprise-grade, self-hosted search and RAG application featuring:
   - Hybrid (RRF fusion over semantic + FTS)
   - RAG (optional LLM synthesis; OpenAI or OCI GenAI supported)
 - Image search (OpenCLIP + pgvector) with optional text+tag filtering
+- Deep Research mode with persistent conversations, notebook, follow-ups, and optional web search
 - Robust schema and indexes:
   - documents(id, source_path, source_type, title, metadata)
   - chunks(id, document_id, chunk_index, content, content_tsv, content_chars, embedding, embedding_model)
@@ -40,6 +41,13 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 2) **Embedding**: OpenCLIP embeds text or image to a vector.
 3) **Vector search**: pgvector similarity against stored image vectors.
 4) **Result shaping**: returns caption/tags + `thumbnail_url` (served by `/api/image-assets/{id}/thumbnail`) for the UI.
+
+### Deep Research Pipeline
+1) **Conversation start**: `/api/deep-research/start` creates a Postgres-backed conversation per space.
+2) **Ask**: `/api/deep-research/ask` stores a user step, runs research (local + optional web), and persists assistant steps + references.
+3) **Notebook**: `/api/deep-research/notebook/{conversation_id}` stores pinned insights.
+4) **Follow-ups**: suggested follow-ups return in assistant metadata; users respond via a modal which sends a combined prompt back through `/api/deep-research/ask`.
+5) **Persistent memory**: DR can opt into the same `memory_events` pipeline as text/sql when enabled.
 
 ## Text Ingestion Lifecycle (All File Types)
 
@@ -189,6 +197,13 @@ Environment variables (see .env.example):
 - POST /api/upload (multipart) files[] (space_id optional)
 - POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k, space_id }
 - POST /api/image-search (query/tags or reference image)
+- POST /api/deep-research/start
+- POST /api/deep-research/ask
+- GET /api/deep-research/conversations?space_id=
+- GET /api/deep-research/conversations/{conversation_id}
+- POST /api/deep-research/conversations/{conversation_id}/title
+- POST /api/deep-research/notebook/{conversation_id}
+- DELETE /api/deep-research/notebook/{entry_id}
 - GET /api/image-assets/{image_id}/thumbnail (thumbnail for image results)
 - GET /api/doc-thumbnail?doc_id=<id> (document thumbnail for Library)
 - GET /api/kb (library listing)
@@ -205,6 +220,7 @@ UI
 - RAG answers include a “References” list (file name, type, and a chunk anchor). Full source paths are not exposed.
 - Image search renders cards using `thumbnail_url` and shows caption/tags/score.
 - Search History now includes filters (activity type, space, and time range), pagination controls, and audit metadata (session last IP/user-agent plus per-activity client IP/user-agent).
+- Deep Research includes a persistent memory toggle (when enabled via env) and follow-up modal with Enter-to-send.
 
 Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 if you’ve just updated templates.
 
@@ -316,9 +332,15 @@ WantedBy=multi-user.target
   - Ensure search-app/.env contains either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.
   - The app auto-loads .env on startup via python-dotenv.
 
+- Deep Research tables missing:
+  - Run `psql "$DATABASE_URL" -f schema_v3.sql` or restart the app so `app/db.py` can create DR tables.
+
 - Embedding dimension mismatch errors during ingestion (e.g., 384 vs 768):
   - EMBEDDING_DIM must match the chosen EMBEDDING_MODEL (MiniLM-L6-v2 -> 384).
   - If you created the schema with the wrong dimension, recreate/alter the column + index, or drop tables and restart to rebuild schema.
+
+- Valkey/Redis references:
+  - Valkey/Redis are no longer used. Remove any leftover env vars and use OCI PostgreSQL for persistence.
 
 - Connectivity/SSL issues to PostgreSQL:
   - Default is DB_SSLMODE=require. Adjust as needed for your environment.
