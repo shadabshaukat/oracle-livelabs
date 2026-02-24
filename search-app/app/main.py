@@ -11,7 +11,7 @@ from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, File, UploadFile, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -19,7 +19,8 @@ import uvicorn
 from .auth import SessionOrBasicAuthMiddleware
 from .config import settings
 from .db import init_db, get_conn
-from .store import ensure_dirs, ingest_file_path, save_upload, create_par_for_object
+from .store import ensure_dirs, ingest_file_path, save_upload
+from .object_storage import default_object_bucket, get_object_store, resolve_object_provider
 from .search import semantic_search, fulltext_search, hybrid_search, rag, image_search
 from .embeddings import get_model
 from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers
@@ -58,6 +59,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 def on_startup():
     ensure_dirs()
     init_db()
+    _migrate_object_metadata()
     # Preload embeddings model to avoid first-search latency
     try:
         get_model()
@@ -187,16 +189,23 @@ async def upload(request: Request, files: List[UploadFile] = File(...), space_id
     results: List[Dict[str, Any]] = []
     for f in files:
         data = await f.read()
-        local_path, oci_url = save_upload(data, Path(f.filename).name, user_email=uemail)
+        local_path, obj_provider, obj_bucket, obj_name = save_upload(data, Path(f.filename).name, user_email=uemail)
         # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
         title_no_ext = Path(title).stem
-        logger.info("Upload stored: backend=%s local=%s oci=%s", settings.storage_backend, local_path, "yes" if oci_url else "no")
+        logger.info("Upload stored: backend=%s local=%s object_name=%s", settings.storage_backend, local_path, obj_name or "")
         try:
             meta = {"filename": title}
-            if oci_url:
-                meta["object_url"] = oci_url
-            ing = ingest_file_path(local_path, user_id=uid, space_id=sid, title=title_no_ext, metadata=meta)
+            ing = ingest_file_path(
+                local_path,
+                user_id=uid,
+                space_id=sid,
+                title=title_no_ext,
+                metadata=meta,
+                object_provider=obj_provider,
+                object_bucket=obj_bucket,
+                object_name=obj_name,
+            )
             logger.info(
                 "Upload ingested: file=%s doc_id=%s chunks=%s user_id=%s space_id=%s",
                 title,
@@ -210,7 +219,9 @@ async def upload(request: Request, files: List[UploadFile] = File(...), space_id
                 "title": title_no_ext,
                 "document_id": ing.document_id,
                 "chunks": ing.num_chunks,
-                "object_url": oci_url,
+                "object_provider": obj_provider,
+                "object_bucket": obj_bucket,
+                "object_name": obj_name,
                 "status": "ok",
             })
         except Exception as e:
@@ -282,11 +293,7 @@ async def api_search(request: Request, payload: Dict[str, Any]):
                     # row: id, source_path, source_type, title, metadata
                     sp = row[1] or ""
                     fn = sp.rsplit("/", 1)[-1] if sp else ""
-                    meta = row[4] or {}
-                    object_url = None
-                    if isinstance(meta, dict):
-                        object_url = meta.get("object_url")
-                    doc_info[int(row[0])] = {"source_path": sp, "file_name": fn, "file_type": row[2] or "", "title": row[3], "object_url": object_url}
+                    doc_info[int(row[0])] = {"source_path": sp, "file_name": fn, "file_type": row[2] or "", "title": row[3]}
 
     hits_out = []
     for h in hits:
@@ -322,7 +329,7 @@ async def api_search(request: Request, payload: Dict[str, Any]):
                 "file_type": e.get("file_type") or "",
                 "chunk_id": e.get("chunk_id"),
                 "href": f"#chunk-{e.get('chunk_id')}",
-                "url": doc_info.get(e.get("document_id", -1), {}).get("object_url") if doc_info else None,
+                "url": None,
             })
         out["references"] = refs
     return out
@@ -430,8 +437,8 @@ async def api_image_search(request: Request):
         meta = doc_meta_map.get(int(doc_id)) if doc_id else {}
         item["thumbnail_url"] = f"/api/image-assets/{image_id}/thumbnail" if image_id else None
         if isinstance(meta, dict):
-            item["thumbnail_object_url"] = meta.get("thumbnail_object_url")
-            item["object_url"] = meta.get("object_url")
+            item["thumbnail_object_url"] = None
+            item["object_url"] = None
         else:
             item["thumbnail_object_url"] = None
             item["object_url"] = None
@@ -450,7 +457,7 @@ async def api_image_thumbnail(request: Request, image_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ia.thumbnail_path, ia.document_id, d.user_id, COALESCE(d.metadata,'{}'::jsonb)
+                SELECT ia.thumbnail_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket, d.thumbnail_object_name
                 FROM image_assets ia
                 JOIN documents d ON d.id = ia.document_id
                 WHERE ia.id = %s
@@ -460,18 +467,21 @@ async def api_image_thumbnail(request: Request, image_id: int):
             row = cur.fetchone()
     if not row:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    thumb_rel, _doc_id, owner_id, metadata = row
+    thumb_rel, _doc_id, owner_id, obj_provider, obj_bucket, thumb_object_name = row
     if int(owner_id) != uid:
         return JSONResponse(status_code=404, content={"error": "not found"})
     path = _resolve_asset_path(thumb_rel)
     if path and path.exists():
         media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
         return FileResponse(str(path), media_type=media_type)
-    meta = metadata or {}
-    if isinstance(meta, dict):
-        remote = meta.get("thumbnail_object_url")
-        if remote:
-            return RedirectResponse(remote, status_code=307)
+    if obj_provider and obj_bucket and thumb_object_name:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, thumb_object_name)
+                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
+        except Exception:
+            logger.exception("Failed to stream thumbnail from object storage: %s", thumb_object_name)
     return JSONResponse(status_code=404, content={"error": "thumbnail unavailable"})
 
 
@@ -485,7 +495,7 @@ async def api_image_asset(request: Request, image_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ia.file_path, ia.document_id, d.user_id, COALESCE(d.metadata,'{}'::jsonb)
+                SELECT ia.file_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket, d.object_name
                 FROM image_assets ia
                 JOIN documents d ON d.id = ia.document_id
                 WHERE ia.id = %s
@@ -495,18 +505,21 @@ async def api_image_asset(request: Request, image_id: int):
             row = cur.fetchone()
     if not row:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    file_rel, _doc_id, owner_id, metadata = row
+    file_rel, _doc_id, owner_id, obj_provider, obj_bucket, obj_name = row
     if int(owner_id) != uid:
         return JSONResponse(status_code=404, content={"error": "not found"})
     path = _resolve_asset_path(file_rel)
     if path and path.exists():
         media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
         return FileResponse(str(path), media_type=media_type)
-    meta = metadata or {}
-    if isinstance(meta, dict):
-        remote = meta.get("object_url")
-        if remote:
-            return RedirectResponse(remote, status_code=307)
+    if obj_provider and obj_bucket and obj_name:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, obj_name)
+                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
+        except Exception:
+            logger.exception("Failed to stream image asset from object storage: %s", obj_name)
     return JSONResponse(status_code=404, content={"error": "image unavailable"})
 
 
@@ -518,18 +531,29 @@ async def api_doc_download(request: Request, doc_id: int):
     uid = int(user.get("user_id") or user.get("id"))
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT source_path, metadata FROM documents WHERE id = %s AND user_id = %s", (int(doc_id), uid))
+            cur.execute(
+                "SELECT source_path, object_provider, object_bucket, object_name FROM documents WHERE id = %s AND user_id = %s",
+                (int(doc_id), uid),
+            )
             row = cur.fetchone()
             if not row:
                 return JSONResponse(status_code=404, content={"error": "document not found"})
             path = row[0] or ""
-            metadata = row[1] or {}
+            obj_provider = row[1]
+            obj_bucket = row[2]
+            obj_name = row[3]
     p = Path(path)
     if p.exists():
         return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
-    object_url = metadata.get("object_url") if isinstance(metadata, dict) else None
-    if object_url:
-        return JSONResponse(status_code=302, content={"redirect": object_url}, headers={"Location": object_url})
+    if obj_provider and obj_bucket and obj_name:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, obj_name)
+                headers = {"Content-Disposition": f"attachment; filename=\"{Path(obj_name).name}\""}
+                return StreamingResponse(stream, media_type=content_type or "application/octet-stream", headers=headers)
+        except Exception:
+            logger.exception("Failed to stream document from object storage: %s", obj_name)
     return JSONResponse(status_code=404, content={"error": "file not found"})
 
 
@@ -542,23 +566,30 @@ async def api_doc_thumbnail(request: Request, doc_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT metadata FROM documents WHERE id = %s AND user_id = %s",
+                "SELECT metadata, object_provider, object_bucket, thumbnail_object_name FROM documents WHERE id = %s AND user_id = %s",
                 (int(doc_id), uid),
             )
             row = cur.fetchone()
             if not row:
                 return JSONResponse(status_code=404, content={"error": "document not found"})
             metadata = row[0] or {}
+            obj_provider = row[1]
+            obj_bucket = row[2]
+            thumb_object_name = row[3]
     thumb_rel = metadata.get("thumbnail_path") if isinstance(metadata, dict) else None
     if thumb_rel:
         path = _resolve_asset_path(thumb_rel)
         if path and path.exists():
             media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
             return FileResponse(str(path), media_type=media_type)
-    if isinstance(metadata, dict):
-        remote = metadata.get("thumbnail_object_url")
-        if remote:
-            return RedirectResponse(remote, status_code=307)
+    if obj_provider and obj_bucket and thumb_object_name:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, thumb_object_name)
+                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
+        except Exception:
+            logger.exception("Failed to stream document thumbnail from object storage: %s", thumb_object_name)
     return JSONResponse(status_code=404, content={"error": "thumbnail unavailable"})
 
 
@@ -654,13 +685,11 @@ async def api_kb(
                                 **img,
                                 "thumbnail_url": f"/api/image-assets/{image_id}/thumbnail" if image_id else None,
                                 "file_url": f"/api/doc-download?doc_id={doc_id}",
-                                "object_url": metadata.get("object_url") if isinstance(metadata, dict) else None,
-                                "thumbnail_object_url": metadata.get("thumbnail_object_url") if isinstance(metadata, dict) else None,
+                                "object_url": None,
+                                "thumbnail_object_url": None,
                             }
                         )
                 preview_url = doc_images[0].get("thumbnail_url") if doc_images else None
-                if not preview_url and isinstance(metadata, dict):
-                    preview_url = metadata.get("thumbnail_object_url")
                 items.append(
                     {
                         "id": doc_id,
@@ -687,14 +716,17 @@ async def api_delete_document(request: Request, doc_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT source_path, metadata FROM documents WHERE id = %s AND user_id = %s",
+                "SELECT source_path, object_provider, object_bucket, object_name, thumbnail_object_name FROM documents WHERE id = %s AND user_id = %s",
                 (int(doc_id), uid),
             )
             row = cur.fetchone()
             if not row:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             source_path = row[0] or ""
-            metadata = row[1] or {}
+            obj_provider = row[1]
+            obj_bucket = row[2]
+            obj_name = row[3]
+            thumb_object_name = row[4]
             cur.execute("DELETE FROM documents WHERE id = %s AND user_id = %s", (int(doc_id), uid))
 
     # Best-effort cleanup of local assets (source file + thumbnails)
@@ -707,13 +739,20 @@ async def api_delete_document(request: Request, doc_id: int):
         logger.warning("Failed to delete source file for doc_id=%s", doc_id)
 
     try:
-        thumb_rel = metadata.get("thumbnail_path") if isinstance(metadata, dict) else None
-        if thumb_rel:
-            thumb_path = _resolve_asset_path(thumb_rel)
-            if thumb_path and thumb_path.exists():
-                thumb_path.unlink()
+        if thumb_object_name and obj_provider and obj_bucket:
+            store = get_object_store(obj_provider)
+            if store:
+                store.delete_object(obj_bucket, thumb_object_name)
     except Exception:
-        logger.warning("Failed to delete thumbnail for doc_id=%s", doc_id)
+        logger.warning("Failed to delete thumbnail object for doc_id=%s", doc_id)
+
+    try:
+        if obj_name and obj_provider and obj_bucket:
+            store = get_object_store(obj_provider)
+            if store:
+                store.delete_object(obj_bucket, obj_name)
+    except Exception:
+        logger.warning("Failed to delete object storage source for doc_id=%s", doc_id)
 
     return {"ok": True, "document_id": int(doc_id)}
 
@@ -1053,6 +1092,63 @@ def get_current_user_sync(request: Request) -> Optional[dict]:
 
 def main():
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, workers=settings.workers, reload=False)
+
+
+def _migrate_object_metadata() -> None:
+    """Backfill object_name + bucket/provider from legacy metadata URLs."""
+    if settings.storage_backend not in {"oci", "s3", "both"}:
+        return
+    provider = resolve_object_provider()
+    bucket = default_object_bucket(provider)
+    if not provider or not bucket:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, metadata
+                FROM documents
+                WHERE (object_name IS NULL OR object_bucket IS NULL OR object_provider IS NULL)
+                  AND metadata IS NOT NULL
+                """
+            )
+            rows = cur.fetchall()
+            for doc_id, metadata in rows:
+                if not isinstance(metadata, dict):
+                    continue
+                object_url = metadata.get("object_url")
+                thumb_url = metadata.get("thumbnail_object_url")
+                object_name = _extract_object_name_from_url(object_url)
+                thumb_name = _extract_object_name_from_url(thumb_url)
+                if object_name or thumb_name:
+                    cur.execute(
+                        """
+                        UPDATE documents
+                        SET object_provider = %s,
+                            object_bucket = %s,
+                            object_name = COALESCE(object_name, %s),
+                            thumbnail_object_name = COALESCE(thumbnail_object_name, %s)
+                        WHERE id = %s
+                        """,
+                        (provider, bucket, object_name, thumb_name, int(doc_id)),
+                    )
+
+
+def _extract_object_name_from_url(url: Any) -> Optional[str]:
+    if not url or not isinstance(url, str):
+        return None
+    try:
+        from urllib.parse import urlparse, unquote
+
+        parsed = urlparse(url)
+        path = parsed.path or ""
+        if "/o/" in path:
+            parts = path.split("/o/", 1)
+            if len(parts) == 2 and parts[1]:
+                return unquote(parts[1])
+    except Exception:
+        return None
+    return None
 
 
 if __name__ == "__main__":

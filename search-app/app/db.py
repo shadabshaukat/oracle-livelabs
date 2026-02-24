@@ -115,6 +115,10 @@ def init_db(s: Settings = settings) -> None:
                     source_path TEXT,
                     source_type TEXT NOT NULL,
                     title TEXT,
+                    object_provider TEXT,
+                    object_bucket TEXT,
+                    object_name TEXT,
+                    thumbnail_object_name TEXT,
                     metadata JSONB DEFAULT '{{}}'::jsonb,
                     created_at TIMESTAMPTZ DEFAULT now()
                 );
@@ -123,6 +127,10 @@ def init_db(s: Settings = settings) -> None:
 
             cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id BIGINT")
             cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS space_id BIGINT")
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_provider TEXT")
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_bucket TEXT")
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_name TEXT")
+            cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS thumbnail_object_name TEXT")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_user_space ON documents(user_id, space_id, created_at DESC)")
 
             cur.execute(

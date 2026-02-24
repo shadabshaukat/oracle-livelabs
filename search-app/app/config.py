@@ -35,8 +35,14 @@ class Settings:
     data_dir: str = os.getenv("DATA_DIR", "storage")
     upload_dir: str = os.getenv("UPLOAD_DIR", "storage/uploads")
     model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", "storage/models")
-    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").lower()  # local | oci
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").lower()  # local | oci | s3 | both
+    object_storage_provider: Optional[str] = os.getenv("OBJECT_STORAGE_PROVIDER")
     oci_os_bucket_name: Optional[str] = os.getenv("OCI_OS_BUCKET_NAME")
+    s3_bucket_name: Optional[str] = os.getenv("S3_BUCKET_NAME")
+    s3_region: Optional[str] = os.getenv("S3_REGION")
+    s3_endpoint_url: Optional[str] = os.getenv("S3_ENDPOINT_URL")
+    s3_access_key_id: Optional[str] = os.getenv("S3_ACCESS_KEY_ID")
+    s3_secret_access_key: Optional[str] = os.getenv("S3_SECRET_ACCESS_KEY")
     # Upload & parsing
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
     use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)
