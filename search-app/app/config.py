@@ -58,6 +58,7 @@ class Settings:
     secret_key: str = os.getenv("SECRET_KEY", "change-me")
     session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "searchapp_session")
     session_max_age_seconds: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "28800"))
+    session_activity_ttl_seconds: int = int(os.getenv("SESSION_ACTIVITY_TTL_SECONDS", "28800"))
     cookie_samesite: str = os.getenv("COOKIE_SAMESITE", "Lax")
     cookie_secure: bool = _get_bool("COOKIE_SECURE", False)
     allow_registration: bool = _get_bool("ALLOW_REGISTRATION", True)
@@ -126,6 +127,7 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "none")  # none|openai|oci
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "1024"))
 
     # OCI configuration
     oci_region: Optional[str] = os.getenv("OCI_REGION")

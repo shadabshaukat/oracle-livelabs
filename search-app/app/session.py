@@ -6,6 +6,7 @@ import json
 import time
 from hashlib import sha256
 from typing import Optional
+import secrets
 
 from fastapi import Request
 
@@ -13,8 +14,29 @@ from .config import settings
 
 # Server-start timestamp used to invalidate sessions across restarts
 SERVER_START_TS: int = int(time.time())
-# Hard session TTL (8 hours)
-SESSION_TTL_SECONDS: int = 8 * 60 * 60
+
+
+def _session_ttl_seconds() -> int:
+    hard_ttl = int(settings.session_activity_ttl_seconds or 8 * 60 * 60)
+    cookie_ttl = int(settings.session_max_age_seconds or hard_ttl)
+    return min(hard_ttl, cookie_ttl)
+
+
+def generate_session_id() -> str:
+    """Generate a UUID7-like hex session id (32 hex chars)."""
+    now_ms = int(time.time() * 1000) & ((1 << 48) - 1)
+    rand_a = secrets.randbits(12)
+    rand_b = secrets.randbits(62)
+
+    b = bytearray(16)
+    b[0:6] = now_ms.to_bytes(6, "big")
+    b[6] = (0x70 | (rand_a >> 8)) & 0x7F
+    b[7] = rand_a & 0xFF
+    # Set variant bits (10xxxxxx)
+    rand_b_bytes = rand_b.to_bytes(8, "big")
+    b[8] = (rand_b_bytes[0] & 0x3F) | 0x80
+    b[9:16] = rand_b_bytes[1:8]
+    return b.hex()
 
 
 def _b64e(b: bytes) -> str:
@@ -46,15 +68,16 @@ def verify_session(token: str) -> Optional[dict]:
         obj = json.loads(data.decode("utf-8"))
         if not isinstance(obj, dict):
             return None
-        if "user_id" not in obj or "email" not in obj:
+        if "user_id" not in obj or "email" not in obj or "sid" not in obj:
             return None
         iat = int(obj.get("iat")) if obj.get("iat") is not None else None
         now = int(time.time())
-        if iat is None or (now - iat) > SESSION_TTL_SECONDS:
+        if iat is None or (now - iat) > _session_ttl_seconds():
             return None
         sv = int(obj.get("sv")) if obj.get("sv") is not None else None
         if sv is None or sv != SERVER_START_TS:
             return None
+        obj["session_id"] = obj.get("sid")
         return obj
     except Exception:
         return None
@@ -68,7 +91,7 @@ async def get_current_user(request: Request) -> Optional[dict]:
 
 
 def set_session_cookie_headers(token: str) -> dict[str, str]:
-    ttl = min(int(settings.session_max_age_seconds or SESSION_TTL_SECONDS), SESSION_TTL_SECONDS)
+    ttl = _session_ttl_seconds()
     attrs = [
         f"{settings.session_cookie_name}={token}",
         "Path=/",

@@ -90,6 +90,7 @@ Add a new search mode in the UI that lets users ask natural language questions a
 ## Configuration Additions (.env)
 - `OCR_ENABLED=true`
 - `OCR_ENGINE=tesseract`
+- `SESSION_ACTIVITY_TTL_SECONDS=28800`
 - `SQL_MAX_ROWS=200`
 - `SQL_SYSTEM_PROMPT="You are an expert PostgreSQL (v14-v18) SQL assistant..."`
 - `SQL_DEFAULT_ROWS=200`
@@ -110,6 +111,7 @@ Add a new search mode in the UI that lets users ask natural language questions a
 - [x] NL2SQL backend route with execution guardrails
 - [x] SQL Search UI + UX
 - [x] Updated docs + env example
+- [x] Search history + session activity capture
 
 ---
 
@@ -197,6 +199,14 @@ Add a new search mode in the UI that lets users ask natural language questions a
 - `.env` / `.env.example`: OCR + SQL_MAX_ROWS config.
 - `pyproject.toml`: `pytesseract` dependency.
 - `schema_v3.sql`: consolidated schema for fresh V3 database seeding.
+
+### Session History + Activity Capture (V3 add-on)
+- Added `search_sessions` and `search_activity` tables to capture per-login sessions and detailed request/response payloads.
+- Session IDs are UUID7-like hex values stored in the signed session cookie and logged per activity.
+- New session timeout config: `SESSION_ACTIVITY_TTL_SECONDS` (default 8 hours).
+- Added `/api/search-history` and `/api/search-history/{session_id}` endpoints for UI display.
+- Account panel now includes a **Search History** accordion with session list + drill-in details.
+- Search history now supports pagination + filters (activity type, space, and time range) and surfaces audit metadata (last IP + user-agent per session; client IP + user-agent per activity).
 
 ### Manual Role Assignment
 Use SQL to assign roles until an admin UI is available:

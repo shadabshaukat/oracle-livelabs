@@ -71,6 +71,73 @@
         </div>
         <button id="logoutBtn" class="ghost">Logout</button>
       </div>
+      <div id="searchHistoryPanel" class="history-panel" hidden>
+        <div class="card-header collapsible" id="historyToggle" role="button" tabindex="0" aria-expanded="false">
+          <h3>Search History</h3>
+          <span class="chevron">▾</span>
+        </div>
+        <div id="historyBody" hidden>
+          <div class="row wrap">
+            <button id="historyRefreshBtn" class="ghost">Refresh</button>
+            <span id="historyStatus" class="muted small"></span>
+          </div>
+          <div class="history-controls">
+            <div class="card-header collapsible history-filter-toggle" id="historyFilterToggle" role="button" tabindex="0" aria-expanded="false">
+              <h4>Search Filters</h4>
+              <span class="chevron">▾</span>
+            </div>
+            <div id="historyFilterBody" class="history-filter-body" hidden>
+              <div class="history-filter-grid">
+                <div class="history-filter-field">
+                  <label for="historyActivityFilter">Activity</label>
+                  <select id="historyActivityFilter">
+                    <option value="">All</option>
+                    <option value="text_hybrid">Text · Hybrid</option>
+                    <option value="text_semantic">Text · Semantic</option>
+                    <option value="text_fulltext">Text · Full-text</option>
+                    <option value="text_rag">Text · RAG</option>
+                    <option value="image_search">Image search</option>
+                    <option value="sql_search">SQL search</option>
+                  </select>
+                </div>
+                <div class="history-filter-field">
+                  <label for="historySpaceFilter">Space</label>
+                  <select id="historySpaceFilter">
+                    <option value="">All</option>
+                  </select>
+                </div>
+                <div class="history-filter-field">
+                  <label for="historySince">Since</label>
+                  <input id="historySince" type="datetime-local" />
+                </div>
+                <div class="history-filter-field">
+                  <label for="historyUntil">Until</label>
+                  <input id="historyUntil" type="datetime-local" />
+                </div>
+                <div class="history-filter-field">
+                  <label for="historyLimit">Per page</label>
+                  <select id="historyLimit">
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="30" selected>30</option>
+                    <option value="50">50</option>
+                  </select>
+                </div>
+                <div class="history-filter-actions">
+                  <button id="historyApplyBtn" class="ghost">Apply</button>
+                  <button id="historyResetBtn" class="ghost">Reset</button>
+                </div>
+              </div>
+            </div>
+            <div class="history-pager">
+              <button id="historyPrevBtn" class="ghost">Prev</button>
+              <span id="historyPageLabel" class="muted small"></span>
+              <button id="historyNextBtn" class="ghost">Next</button>
+            </div>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+      </div>
     </section>
 
     <!-- App: Search -->
@@ -393,6 +460,44 @@
         .replace(/'/g, '&#039;');
     }
 
+    function formatTime(iso) {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleString();
+      } catch {
+        return iso;
+      }
+    }
+
+    function toLocalInputValue(iso) {
+      if (!iso) return '';
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function toIsoFromInput(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toISOString();
+    }
+
+    function truncateText(text, maxChars) {
+      if (!text) return '';
+      return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+    }
+
+    function stringifyPayload(payload, maxChars = 4000) {
+      try {
+        const raw = JSON.stringify(payload || {}, null, 2);
+        return truncateText(raw, maxChars);
+      } catch {
+        return '{}';
+      }
+    }
+
     function highlight(text, query) {
       if (!query) return escapeHtml(text);
       try {
@@ -473,6 +578,269 @@
       });
       if (!res.ok) throw new Error(await res.text());
       return await res.json();
+    }
+
+    const historyState = {
+      limit: 30,
+      offset: 0,
+      activityType: '',
+      spaceId: '',
+      since: '',
+      until: ''
+    };
+
+    const historySessionState = new Map();
+    const historyActivityLimit = 20;
+
+    function getSpaceLabel(spaceId) {
+      if (spaceId == null) return 'All spaces';
+      const match = state.spaces.find(s => String(s.id) === String(spaceId));
+      return match ? match.name : `Space ${spaceId}`;
+    }
+
+    function syncHistoryFilterInputs() {
+      const activityEl = document.getElementById('historyActivityFilter');
+      const spaceEl = document.getElementById('historySpaceFilter');
+      const sinceEl = document.getElementById('historySince');
+      const untilEl = document.getElementById('historyUntil');
+      const limitEl = document.getElementById('historyLimit');
+      if (activityEl) activityEl.value = historyState.activityType || '';
+      if (spaceEl) spaceEl.value = historyState.spaceId || '';
+      if (sinceEl) sinceEl.value = toLocalInputValue(historyState.since);
+      if (untilEl) untilEl.value = toLocalInputValue(historyState.until);
+      if (limitEl) limitEl.value = String(historyState.limit || 30);
+    }
+
+    function populateHistorySpaceFilter() {
+      const spaceEl = document.getElementById('historySpaceFilter');
+      if (!spaceEl) return;
+      const current = historyState.spaceId || '';
+      spaceEl.innerHTML = '<option value="">All</option>';
+      state.spaces.forEach(space => {
+        const opt = document.createElement('option');
+        opt.value = String(space.id);
+        opt.textContent = space.name;
+        spaceEl.appendChild(opt);
+      });
+      spaceEl.value = current;
+    }
+
+    function readHistoryFilters() {
+      const activityEl = document.getElementById('historyActivityFilter');
+      const spaceEl = document.getElementById('historySpaceFilter');
+      const sinceEl = document.getElementById('historySince');
+      const untilEl = document.getElementById('historyUntil');
+      const limitEl = document.getElementById('historyLimit');
+      historyState.activityType = activityEl?.value || '';
+      historyState.spaceId = spaceEl?.value || '';
+      historyState.since = toIsoFromInput(sinceEl?.value || '');
+      historyState.until = toIsoFromInput(untilEl?.value || '');
+      historyState.limit = Math.max(1, parseInt(limitEl?.value || '30', 10));
+    }
+
+    function resetHistoryFilters() {
+      historyState.activityType = '';
+      historyState.spaceId = '';
+      historyState.since = '';
+      historyState.until = '';
+      historyState.limit = 30;
+      historyState.offset = 0;
+      syncHistoryFilterInputs();
+    }
+
+    function buildHistoryQuery(params) {
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') return;
+        query.set(key, String(value));
+      });
+      const qs = query.toString();
+      return qs ? `?${qs}` : '';
+    }
+
+    function updateHistoryPager(hasNext) {
+      const prevBtn = document.getElementById('historyPrevBtn');
+      const nextBtn = document.getElementById('historyNextBtn');
+      const label = document.getElementById('historyPageLabel');
+      const start = historyState.offset + 1;
+      const end = historyState.offset + historyState.limit;
+      if (label) {
+        label.textContent = `Showing ${start}-${end}`;
+      }
+      if (prevBtn) prevBtn.disabled = historyState.offset <= 0;
+      if (nextBtn) nextBtn.disabled = !hasNext;
+    }
+
+    async function loadSearchHistory() {
+      const list = document.getElementById('historyList');
+      const status = document.getElementById('historyStatus');
+      if (!list || !state.user) return;
+      list.innerHTML = '';
+      if (status) status.textContent = 'Loading…';
+      try {
+        readHistoryFilters();
+        const query = buildHistoryQuery({
+          limit: historyState.limit,
+          offset: historyState.offset,
+          activity_type: historyState.activityType,
+          space_id: historyState.spaceId,
+          since: historyState.since,
+          until: historyState.until
+        });
+        const data = await api(`/api/search-history${query}`);
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        updateHistoryPager(sessions.length === historyState.limit);
+        if (!sessions.length) {
+          list.textContent = 'No search sessions yet.';
+          if (status) status.textContent = '';
+          return;
+        }
+        list.innerHTML = '';
+        sessions.forEach((session) => {
+          const details = document.createElement('details');
+          details.className = 'history-item';
+          details.dataset.sessionId = session.session_id;
+          details.dataset.activityOffset = '0';
+          const title = session.name || session.last_summary || 'Search session';
+          const summary = document.createElement('summary');
+          const spaceLabel = getSpaceLabel(session.space_id);
+          summary.innerHTML = `
+            <div class="history-summary">
+              <span class="history-title">${escapeHtml(truncateText(title, 80))}</span>
+              <span class="history-time">${escapeHtml(formatTime(session.last_activity_at || session.first_activity_at))}</span>
+            </div>
+            <div class="history-sub">
+              <span class="history-id">${escapeHtml(session.session_id)}</span>
+              ${spaceLabel ? `<span class="badge">${escapeHtml(spaceLabel)}</span>` : ''}
+              ${session.last_activity_type ? `<span class="badge">${escapeHtml(session.last_activity_type)}</span>` : ''}
+            </div>
+          `;
+          details.appendChild(summary);
+          const body = document.createElement('div');
+          body.className = 'history-detail';
+          body.innerHTML = `
+            <div class="history-meta-grid">
+              <div>
+                <div class="history-meta-label">Session</div>
+                <div class="history-meta-value">${escapeHtml(session.name || session.session_id)}</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Space</div>
+                <div class="history-meta-value">${escapeHtml(spaceLabel || '—')}</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Last activity</div>
+                <div class="history-meta-value">${escapeHtml(formatTime(session.last_activity_at))}</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Session ID</div>
+                <div class="history-meta-value history-id">${escapeHtml(session.session_id)}</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Last IP</div>
+                <div class="history-meta-value history-session-ip">—</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Last user agent</div>
+                <div class="history-meta-value history-session-ua">—</div>
+              </div>
+            </div>
+            <div class="history-activities muted small">Expand to load details…</div>
+            <div class="history-activity-controls">
+              <button class="history-more-btn ghost" hidden>Load more</button>
+              <span class="history-activity-status muted small"></span>
+            </div>
+          `;
+          details.appendChild(body);
+          const loadSessionActivities = async ({ reset = false } = {}) => {
+            const container = body.querySelector('.history-activities');
+            const statusEl = body.querySelector('.history-activity-status');
+            const loadMoreBtn = body.querySelector('.history-more-btn');
+            if (!container) return;
+            if (reset) {
+              details.dataset.activityOffset = '0';
+              historySessionState.delete(session.session_id);
+              container.textContent = 'Loading session details…';
+            }
+            const offset = parseInt(details.dataset.activityOffset || '0', 10);
+            if (statusEl) statusEl.textContent = 'Loading…';
+            try {
+              const detailQuery = buildHistoryQuery({
+                limit: historyActivityLimit,
+                offset,
+                activity_type: historyState.activityType
+              });
+              const detail = await api(`/api/search-history/${session.session_id}${detailQuery}`);
+              const activities = Array.isArray(detail.activities) ? detail.activities : [];
+              const metaIp = body.querySelector('.history-session-ip');
+              const metaUa = body.querySelector('.history-session-ua');
+              if (metaIp) metaIp.textContent = detail?.session?.last_ip || '—';
+              if (metaUa) metaUa.textContent = detail?.session?.last_user_agent || '—';
+              if (!activities.length && offset === 0) {
+                container.textContent = 'No activities recorded.';
+                if (loadMoreBtn) loadMoreBtn.hidden = true;
+                if (statusEl) statusEl.textContent = '';
+                return;
+              }
+              const items = activities.map((act) => {
+                const requestPayload = stringifyPayload(act.request);
+                const responsePayload = stringifyPayload(act.response);
+                const actorMeta = [act.client_ip ? `IP: ${act.client_ip}` : '', act.user_agent ? `UA: ${act.user_agent}` : '']
+                  .filter(Boolean)
+                  .join(' · ');
+                return `
+                  <div class="history-activity">
+                    <div class="history-activity-header">
+                      <span>${escapeHtml(act.activity_type || 'activity')}</span>
+                      <span class="muted small">${escapeHtml(formatTime(act.created_at))}</span>
+                    </div>
+                    ${actorMeta ? `<div class="history-activity-meta muted small">${escapeHtml(actorMeta)}</div>` : ''}
+                    ${act.summary ? `<div class="history-activity-summary">${escapeHtml(act.summary)}</div>` : ''}
+                    <details class="history-payload">
+                      <summary>Request</summary>
+                      <pre>${escapeHtml(requestPayload)}</pre>
+                    </details>
+                    <details class="history-payload">
+                      <summary>Response</summary>
+                      <pre>${escapeHtml(responsePayload)}</pre>
+                    </details>
+                  </div>
+                `;
+              }).join('');
+              if (offset === 0) {
+                container.innerHTML = items;
+              } else {
+                container.insertAdjacentHTML('beforeend', items);
+              }
+              details.dataset.activityOffset = String(offset + activities.length);
+              if (loadMoreBtn) loadMoreBtn.hidden = activities.length < historyActivityLimit;
+              if (statusEl) {
+                statusEl.textContent = activities.length ? `Loaded ${offset + activities.length}` : '';
+              }
+            } catch (e) {
+              if (container) container.textContent = 'Failed to load session details.';
+              if (statusEl) statusEl.textContent = '';
+              if (loadMoreBtn) loadMoreBtn.hidden = true;
+            }
+          };
+          const loadMoreBtn = body.querySelector('.history-more-btn');
+          if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              loadSessionActivities({ reset: false });
+            });
+          }
+          details.addEventListener('toggle', async () => {
+            if (!details.open) return;
+            await loadSessionActivities({ reset: true });
+          });
+          list.appendChild(details);
+        });
+        if (status) status.textContent = '';
+      } catch (e) {
+        if (status) status.textContent = 'Failed to load history.';
+        list.textContent = 'Failed to load search history.';
+      }
     }
 
     function renderResults(hits, query) {
@@ -1371,6 +1739,7 @@
       const authPanel = document.getElementById('authPanel');
       const accountPanel = document.getElementById('accountPanel');
       const accountSection = document.getElementById('accountSection');
+      const historyPanel = document.getElementById('searchHistoryPanel');
       const library = document.getElementById('librarySection');
       const landing = document.getElementById('landingSection');
       const search = document.getElementById('searchSection');
@@ -1378,15 +1747,19 @@
       if (state.user) {
         authPanel.hidden = true;
         accountPanel.hidden = false;
+        if (historyPanel) historyPanel.hidden = false;
         if (accountSection) accountSection.hidden = true;
         library.hidden = false;
         landing.hidden = true;
         search.hidden = false;
         upload.hidden = false;
         document.getElementById('userEmail').textContent = `${state.user.email || ''} (${state.role})`;
+        populateHistorySpaceFilter();
+        loadSearchHistory();
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
+        if (historyPanel) historyPanel.hidden = true;
         if (accountSection) accountSection.hidden = true;
         library.hidden = true;
         landing.hidden = false;
@@ -1415,6 +1788,7 @@
       sel.value = state.spaceId || '';
       topSel.value = state.spaceId || '';
       topSel.hidden = false;
+      populateHistorySpaceFilter();
       loadLibrary();
     }
 
@@ -1623,6 +1997,40 @@
     }
     bindCollapsible('uploadToggle', 'uploadBody');
     bindCollapsible('libraryToggle', 'libraryBody');
+    bindCollapsible('historyToggle', 'historyBody');
+    bindCollapsible('historyFilterToggle', 'historyFilterBody');
+    const historyRefreshBtn = document.getElementById('historyRefreshBtn');
+    if (historyRefreshBtn) {
+      historyRefreshBtn.addEventListener('click', () => loadSearchHistory());
+    }
+    const historyApplyBtn = document.getElementById('historyApplyBtn');
+    if (historyApplyBtn) {
+      historyApplyBtn.addEventListener('click', () => {
+        historyState.offset = 0;
+        loadSearchHistory();
+      });
+    }
+    const historyResetBtn = document.getElementById('historyResetBtn');
+    if (historyResetBtn) {
+      historyResetBtn.addEventListener('click', () => {
+        resetHistoryFilters();
+        loadSearchHistory();
+      });
+    }
+    const historyPrevBtn = document.getElementById('historyPrevBtn');
+    if (historyPrevBtn) {
+      historyPrevBtn.addEventListener('click', () => {
+        historyState.offset = Math.max(0, historyState.offset - historyState.limit);
+        loadSearchHistory();
+      });
+    }
+    const historyNextBtn = document.getElementById('historyNextBtn');
+    if (historyNextBtn) {
+      historyNextBtn.addEventListener('click', () => {
+        historyState.offset = historyState.offset + historyState.limit;
+        loadSearchHistory();
+      });
+    }
     document.getElementById('loginBtn').addEventListener('click', async () => {
       const email = document.getElementById('loginEmail').value.trim();
       const password = document.getElementById('loginPassword').value;
