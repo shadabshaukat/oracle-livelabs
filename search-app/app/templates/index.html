@@ -316,8 +316,9 @@
       </div>
       <div id="uploadBody" hidden>
         <p class="muted">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</p>
-        <div class="row wrap">
+        <div class="row wrap upload-actions-row">
           <button id="uploadBtn">Upload</button>
+          <button id="uploadResetBtn" class="ghost" type="button">Clear</button>
           <div class="loader" id="uploadLoading" hidden>
             <div class="spinner small"></div>
             <span>Processing…</span>
@@ -489,13 +490,75 @@
       return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
     }
 
-    function stringifyPayload(payload, maxChars = 4000) {
+    function stringifyPayload(payload) {
       try {
-        const raw = JSON.stringify(payload || {}, null, 2);
-        return truncateText(raw, maxChars);
+        return JSON.stringify(payload || {}, null, 2);
       } catch {
         return '{}';
       }
+    }
+
+    function copyToClipboard(text) {
+      if (navigator.clipboard?.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise((resolve, reject) => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          const ok = document.execCommand('copy');
+          document.body.removeChild(textarea);
+          if (ok) resolve();
+          else reject(new Error('copy_failed'));
+        } catch (err) {
+          document.body.removeChild(textarea);
+          reject(err);
+        }
+      });
+    }
+
+    function attachPayloadControls(container) {
+      if (!container) return;
+      container.querySelectorAll('.history-payload').forEach((payload) => {
+        if (payload.dataset.bound === 'true') return;
+        payload.dataset.bound = 'true';
+        const pre = payload.querySelector('pre');
+        const toolbar = payload.querySelector('.history-payload-toolbar');
+        const toggleBtn = payload.querySelector('.history-toggle-btn');
+        const copyBtn = payload.querySelector('.history-copy-btn');
+        if (toggleBtn && pre) {
+          toggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const expanded = payload.dataset.expanded === 'true';
+            payload.dataset.expanded = expanded ? 'false' : 'true';
+            toggleBtn.textContent = expanded ? 'Expand' : 'Collapse';
+            pre.classList.toggle('is-collapsed', expanded);
+          });
+        }
+        if (copyBtn && pre) {
+          copyBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            try {
+              await copyToClipboard(pre.textContent || '');
+              if (toolbar) {
+                toolbar.dataset.copied = 'true';
+                setTimeout(() => {
+                  toolbar.dataset.copied = 'false';
+                }, 1500);
+              }
+              showToast('Copied response');
+            } catch (err) {
+              console.error(err);
+              showToast('Copy failed');
+            }
+          });
+        }
+      });
     }
 
     function highlight(text, query) {
@@ -798,11 +861,19 @@
                     ${act.summary ? `<div class="history-activity-summary">${escapeHtml(act.summary)}</div>` : ''}
                     <details class="history-payload">
                       <summary>Request</summary>
-                      <pre>${escapeHtml(requestPayload)}</pre>
+                      <div class="history-payload-toolbar">
+                        <button class="ghost history-toggle-btn" type="button">Expand</button>
+                        <button class="ghost history-copy-btn" type="button">Copy</button>
+                      </div>
+                      <pre class="is-collapsed">${escapeHtml(requestPayload)}</pre>
                     </details>
                     <details class="history-payload">
                       <summary>Response</summary>
-                      <pre>${escapeHtml(responsePayload)}</pre>
+                      <div class="history-payload-toolbar">
+                        <button class="ghost history-toggle-btn" type="button">Expand</button>
+                        <button class="ghost history-copy-btn" type="button">Copy</button>
+                      </div>
+                      <pre class="is-collapsed">${escapeHtml(responsePayload)}</pre>
                     </details>
                   </div>
                 `;
@@ -812,6 +883,7 @@
               } else {
                 container.insertAdjacentHTML('beforeend', items);
               }
+              attachPayloadControls(container);
               details.dataset.activityOffset = String(offset + activities.length);
               if (loadMoreBtn) loadMoreBtn.hidden = activities.length < historyActivityLimit;
               if (statusEl) {
@@ -1173,13 +1245,41 @@
         }
         return `
           <div class="sql-block">
-            <div class="sql-block-title">${label}</div>
+            <div class="sql-block-header">
+              <div class="sql-block-title">${label}</div>
+              <button class="ghost small-btn sql-copy-btn" type="button">Copy SQL</button>
+            </div>
             ${error}
             <pre class="code-block">${sql}</pre>
             ${resultsHtml}
           </div>
         `;
       }).join('');
+    }
+
+    function bindSqlCopyButtons() {
+      document.querySelectorAll('.sql-copy-btn').forEach((btn) => {
+        if (btn.dataset.bound === 'true') return;
+        btn.dataset.bound = 'true';
+        btn.addEventListener('click', async () => {
+          const block = btn.closest('.sql-block');
+          const code = block?.querySelector('pre.code-block');
+          const text = code?.textContent || '';
+          if (!text.trim()) {
+            showToast('No SQL to copy');
+            return;
+          }
+          try {
+            await copyToClipboard(text);
+            btn.classList.add('is-copied');
+            setTimeout(() => btn.classList.remove('is-copied'), 1500);
+            showToast('Copied SQL');
+          } catch (err) {
+            console.error(err);
+            showToast('Copy failed');
+          }
+        });
+      });
     }
 
     function bindSqlTableSorting() {
@@ -1322,6 +1422,23 @@
     const dropzone = document.getElementById('dropzone');
     let droppedFiles = [];
 
+    function resetUploadPanel() {
+      droppedFiles = [];
+      const filesInput = document.getElementById('files');
+      const list = document.getElementById('uploadList');
+      const listRow = document.getElementById('uploadListRow');
+      const status = document.getElementById('uploadStatus');
+      const statusRow = document.getElementById('uploadStatusRow');
+      const loading = document.getElementById('uploadLoading');
+      if (filesInput) filesInput.value = '';
+      if (list) list.innerHTML = '';
+      if (listRow) listRow.hidden = true;
+      if (status) status.textContent = '';
+      if (statusRow) statusRow.hidden = true;
+      if (loading) loading.hidden = true;
+      if (dropzone) dropzone.textContent = 'Drag & drop files here';
+    }
+
     function addFilesToList(fileList) {
       const err = validateUploadSelection(fileList);
       if (err) {
@@ -1398,6 +1515,14 @@
     }
     const filesInputEl = document.getElementById('files');
     bindFileInput(filesInputEl);
+
+    const uploadResetBtn = document.getElementById('uploadResetBtn');
+    if (uploadResetBtn) {
+      uploadResetBtn.addEventListener('click', () => {
+        resetUploadPanel();
+        showToast('Upload selection cleared');
+      });
+    }
 
     const readyBtn = document.getElementById('readyBtn');
     if (readyBtn) {
@@ -2152,6 +2277,7 @@
 
     const sqlObserver = new MutationObserver(() => {
       bindSqlTableSorting();
+      bindSqlCopyButtons();
     });
     sqlObserver.observe(document.getElementById('sqlGenerated'), { childList: true, subtree: true });
   </script>

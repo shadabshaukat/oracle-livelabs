@@ -1410,7 +1410,7 @@ async def api_search_history(
                 ORDER BY s.last_activity_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (*params, uid, limit, offset),
+                (uid, *params, limit, offset),
             )
             rows = cur.fetchall()
     sessions = []
