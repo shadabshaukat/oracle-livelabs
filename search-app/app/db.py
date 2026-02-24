@@ -87,9 +87,58 @@ def init_db(s: Settings = settings) -> None:
                     id BIGSERIAL PRIMARY KEY,
                     email CITEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
+                    role_id BIGINT,
                     created_at TIMESTAMPTZ DEFAULT now(),
                     last_login_at TIMESTAMPTZ
                 );
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS roles (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                );
+                """
+            )
+
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id BIGINT")
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'users_role_id_fkey'
+                    ) THEN
+                        ALTER TABLE users
+                        ADD CONSTRAINT users_role_id_fkey FOREIGN KEY (role_id) REFERENCES roles(id);
+                    END IF;
+                END $$;
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)")
+
+            cur.execute(
+                """
+                INSERT INTO roles (name, description)
+                VALUES
+                    ('user', 'Default user, no SQL access'),
+                    ('analyst', 'Analyst: NL2SQL across all spaces'),
+                    ('admin', 'Admin: NL2SQL + system queries')
+                ON CONFLICT (name) DO NOTHING
+                """
+            )
+
+            cur.execute(
+                """
+                UPDATE users
+                SET role_id = (SELECT id FROM roles WHERE name = 'user')
+                WHERE role_id IS NULL
                 """
             )
 
@@ -196,12 +245,15 @@ def init_db(s: Settings = settings) -> None:
                     height INT,
                     tags JSONB DEFAULT '[]'::jsonb,
                     caption TEXT,
+                    ocr_text TEXT,
                     embedding vector({image_dim}),
                     embedding_model TEXT,
                     created_at TIMESTAMPTZ DEFAULT now()
                 );
                 """
             )
+
+            cur.execute("ALTER TABLE image_assets ADD COLUMN IF NOT EXISTS ocr_text TEXT")
 
             cur.execute(
                 """
@@ -214,6 +266,61 @@ def init_db(s: Settings = settings) -> None:
                 CREATE INDEX IF NOT EXISTS idx_image_assets_embedding_ivfflat
                 ON image_assets USING ivfflat (embedding {opclass})
                 WITH (lists = {s.pgvector_lists});
+                """
+            )
+
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS memory_events (
+                    id BIGSERIAL,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE CASCADE,
+                    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                    memory_type TEXT NOT NULL,
+                    query_text TEXT,
+                    response_text TEXT,
+                    generated_sql TEXT,
+                    columns JSONB DEFAULT '[]'::jsonb,
+                    result_sample JSONB DEFAULT '[]'::jsonb,
+                    metadata JSONB DEFAULT '{{}}'::jsonb,
+                    rating SMALLINT,
+                    summary TEXT,
+                    embedding vector({dim}),
+                    embedding_model TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (id, created_at)
+                ) PARTITION BY RANGE (created_at);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_events_default
+                  PARTITION OF memory_events DEFAULT;
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_events_space_time
+                  ON memory_events(space_id, memory_type, created_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_events_space_rating
+                  ON memory_events(space_id, memory_type, rating, created_at DESC);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_events_id
+                  ON memory_events(id);
+                """
+            )
+            cur.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_memory_events_embedding_ivfflat
+                  ON memory_events USING ivfflat (embedding {opclass})
+                  WITH (lists = {s.pgvector_lists});
                 """
             )
 

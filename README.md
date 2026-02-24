@@ -176,6 +176,28 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - Authentication: Basic Auth protects `/` and `/api`
 - Images not rendering: confirm `/api/image-assets/{image_id}/thumbnail` returns 200 and that you are logged in (session cookies).
 
+## New Features in V2 ##
+
+ 1. New Landing page !
+ 2. User account sign-up with an email and password
+ 3. Added vectorizing images to OCI Postgres and doing image search
+ 4. Every user gets a space where they can upload files and images. 1 user can have multiple spaces
+ 5. File browser in-build for each user and it's associated space
+ 6. OCI Object storage used to store and retrieve images via SDK (no more par urls)
+ 7. Search and chunking enhancements by used Langchain RCTS 
+ 8. UI improvements to render it on both mobile and desktop
+ 9. Search accuracy improvement by enhancing the semantic search & RAG pipeline
+10. Metrics added to measure and display LLM response and semantic search response
+
+URL : https://search.shadabmohammad.com/
+
+## Get Started ##
+
+1. Use API username/password to login :   admin/*******
+2, Register with an email and password
+3. Login with email and Fire up!
+
+
 
 ## License
 Apache-2.0

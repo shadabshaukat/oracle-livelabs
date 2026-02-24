@@ -88,6 +88,7 @@
         <div class="tabs">
           <button id="searchModeText" class="tab active">Text Search</button>
           <button id="searchModeImage" class="tab">Image Search</button>
+          <button id="searchModeSql" class="tab" hidden>SQL Search</button>
         </div>
       </div>
 
@@ -121,6 +122,11 @@
             <label for="debounceMs" class="leftpad">Debounce (ms)</label>
             <input id="debounceMs" type="number" value="400" min="100" max="2000" />
           </div>
+          <div class="row no-grow" id="textPersistentMemoryRow" {% if not text_persistent_memory_enabled %}hidden{% endif %}>
+            <label for="textPersistentMemory" class="leftpad">Persistent memory</label>
+            <input id="textPersistentMemory" type="checkbox" />
+            <span class="muted small">(thumbs-up only)</span>
+          </div>
         </div>
         <div id="imageSettings" class="row wrap" hidden>
           <div class="row no-grow">
@@ -135,6 +141,48 @@
             <label for="imageFile" class="leftpad">Reference image</label>
             <input id="imageFile" type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp" />
           </div>
+          <div class="row no-grow" id="imagePersistentMemoryRow" {% if not image_persistent_memory_enabled %}hidden{% endif %}>
+            <label for="imagePersistentMemory" class="leftpad">Persistent memory</label>
+            <input id="imagePersistentMemory" type="checkbox" />
+            <span class="muted small">(thumbs-up only)</span>
+          </div>
+        </div>
+        <div id="sqlSettings" class="row wrap" hidden>
+          <div class="row no-grow">
+          <label class="block">SQL Mode</label>
+          <div class="radio-group">
+            <label class="radio-pill"><input id="sqlModeRun" type="radio" name="sqlMode" value="run" checked /> Run SQL</label>
+            <label class="radio-pill"><input id="sqlModeShow" type="radio" name="sqlMode" value="show" /> Show SQL</label>
+          </div>
+          </div>
+          <div class="row no-grow">
+            <label class="block">SQL Context</label>
+            <div class="radio-group">
+              <label class="radio-pill"><input id="sqlContextUser" type="radio" name="sqlContext" value="user" checked /> User schema</label>
+              <label class="radio-pill"><input id="sqlContextSystem" type="radio" name="sqlContext" value="system" /> System catalog</label>
+            </div>
+            <span class="muted small">System context is admin-only.</span>
+          </div>
+          <div class="row no-grow">
+          <label for="sqlMaxRows" class="leftpad">Max rows</label>
+          <input id="sqlMaxRows" type="number" min="1" max="{{ sql_max_rows }}" value="{{ sql_default_rows }}" />
+          <span class="muted small">(limit {{ sql_max_rows }})</span>
+          </div>
+          <div class="row no-grow">
+            <label for="sqlMemoryTurns" class="leftpad">Memory turns</label>
+            <input id="sqlMemoryTurns" type="number" min="0" max="100" value="{{ sql_memory_turns }}" />
+            <span class="muted small">(0 disables memory)</span>
+          </div>
+          <div class="row no-grow" id="sqlPersistentMemoryRow" {% if not sql_persistent_memory_enabled %}hidden{% endif %}>
+            <label for="sqlPersistentMemory" class="leftpad">Persistent memory</label>
+            <input id="sqlPersistentMemory" type="checkbox" />
+            <span class="muted small">(thumbs-up only)</span>
+          </div>
+        <div class="row row--full">
+          <label for="sqlSystemPrompt">SQL System Prompt</label>
+          <textarea id="sqlSystemPrompt" rows="3">{{ sql_system_prompt }}</textarea>
+          <span class="muted small">Editable for this session; leave blank to use the default prompt.</span>
+        </div>
         </div>
       </div>
 
@@ -148,6 +196,12 @@
       <div class="row row--full" id="answerRow" hidden>
         <label class="panel-title">LLM Response <span id="llmBadge" class="badge" style="display:none"></span><span id="llmTime" class="badge badge--time" style="display:none"></span></label>
         <div id="answer" class="panel answer-panel"></div>
+        <div id="textMemoryRating" class="memory-rating" hidden>
+          <span class="muted small">Save in memory?</span>
+          <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
+          <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
+          <span class="memory-rating-status muted small"></span>
+        </div>
       </div>
       <div class="row row--full" id="resultsRow" hidden>
         <label class="panel-title">Search Matches <span id="resultsTime" class="badge badge--time" style="display:none"></span></label>
@@ -160,6 +214,30 @@
       <div class="row row--full" id="imageResultsRow" hidden>
         <label>Image Results</label>
         <div id="imageResults" class="image-results"></div>
+        <div id="imageMemoryRating" class="memory-rating" hidden>
+          <span class="muted small">Save in memory?</span>
+          <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
+          <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
+          <span class="memory-rating-status muted small"></span>
+        </div>
+      </div>
+      <div class="row row--full" id="sqlResultsRow" hidden>
+        <label class="panel-title">SQL Search <span id="sqlContextBadge" class="badge" style="display:none"></span><span id="sqlTime" class="badge badge--time" style="display:none"></span></label>
+        <div class="panel sql-panel">
+          <div id="sqlError" class="sql-error" hidden></div>
+          <div id="sqlMemoryRating" class="memory-rating" hidden>
+            <span class="muted small">Save in memory?</span>
+            <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
+            <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
+            <span class="memory-rating-status muted small"></span>
+          </div>
+          <div class="sql-section">
+            <div class="sql-header">
+              <label class="muted small">Generated SQL</label>
+            </div>
+            <div id="sqlGenerated" class="sql-generated"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -244,6 +322,11 @@
         allowedExtensions: list.length ? list : ['.pdf','.docx','.doc','.txt','.html','.htm','.md','.csv','.json','.xml','.pptx','.xlsx','.xls','.png','.jpg','.jpeg','.gif','.webp','.bmp']
       };
     })();
+    const persistentMemoryConfig = {
+      sqlEnabled: {{ 'true' if sql_persistent_memory_enabled else 'false' }},
+      textEnabled: {{ 'true' if text_persistent_memory_enabled else 'false' }},
+      imageEnabled: {{ 'true' if image_persistent_memory_enabled else 'false' }}
+    };
     // Theme toggle
     (function(){
       const btn = document.getElementById('themeBtn');
@@ -441,6 +524,7 @@
       const results = document.getElementById('results');
       const resultsRow = document.getElementById('resultsRow');
       const badge = document.getElementById('llmBadge');
+      const rating = document.getElementById('textMemoryRating');
       if (ans) ans.innerHTML = '';
       if (answerRow) answerRow.hidden = true;
       if (refsEl) {
@@ -454,6 +538,13 @@
       }
       if (resultsRow) resultsRow.hidden = true;
       if (badge) badge.style.display = 'none';
+      if (rating) {
+        rating.hidden = true;
+        rating.dataset.memoryId = '';
+        rating.querySelectorAll('.thumb-btn').forEach(btn => btn.classList.remove('active'));
+        const status = rating.querySelector('.memory-rating-status');
+        if (status) status.textContent = '';
+      }
       setTimingBadge('llmTime', null);
       setTimingBadge('resultsTime', null);
     }
@@ -461,14 +552,22 @@
     function clearImageResults() {
       const imageResults = document.getElementById('imageResults');
       const imageRow = document.getElementById('imageResultsRow');
+      const rating = document.getElementById('imageMemoryRating');
       if (imageResults) imageResults.innerHTML = '';
       if (imageRow) imageRow.hidden = true;
+      if (rating) {
+        rating.hidden = true;
+        rating.dataset.memoryId = '';
+        rating.querySelectorAll('.thumb-btn').forEach(btn => btn.classList.remove('active'));
+        const status = rating.querySelector('.memory-rating-status');
+        if (status) status.textContent = '';
+      }
     }
 
     let currentSearchController = null;
     let searchTimer = null;
     let searchMode = 'text';
-    let state = { user: null, spaces: [], spaceId: null };
+    let state = { user: null, spaces: [], spaceId: null, role: 'user' };
 
     let librarySort = 'newest';
     let libraryView = 'grid';
@@ -479,6 +578,7 @@
       const query = document.getElementById('query').value.trim();
       const mode = document.getElementById('mode').value;
       const topk = parseInt(document.getElementById('topk').value || '25', 10);
+      const persistentMemory = document.getElementById('textPersistentMemory')?.checked ?? false;
       const ans = document.getElementById('answer');
       const answerRow = document.getElementById('answerRow');
       const loading = document.getElementById('searchLoading');
@@ -498,7 +598,7 @@
       const startedAt = performance.now();
 
       try {
-        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk, space_id: state.spaceId }, signal: ctrl.signal });
+        const data = await api('/api/search', { method: 'POST', body: { query, mode, top_k: topk, space_id: state.spaceId, persistent_memory: persistentMemory }, signal: ctrl.signal });
         const timings = data.timings || {};
         if (data.answer) {
           ans.innerHTML = formatAnswer(data.answer);
@@ -547,6 +647,14 @@
           const dbMs = timings.db_ms;
           setTimingBadge('resultsTime', dbMs);
         }
+        const rating = document.getElementById('textMemoryRating');
+        if (rating && persistentMemoryConfig.textEnabled && persistentMemory && data.memory_event_id) {
+          rating.hidden = false;
+          rating.dataset.memoryId = data.memory_event_id;
+        } else if (rating) {
+          rating.hidden = true;
+          rating.dataset.memoryId = '';
+        }
       } catch (e) {
         if (e.name !== 'AbortError') {
           showToast('Search failed');
@@ -559,6 +667,187 @@
       }
     }
 
+    async function doSqlSearch() {
+      const question = document.getElementById('query').value.trim();
+      const execute = document.getElementById('sqlModeRun').checked;
+      const showResults = execute;
+      const sqlContext = document.getElementById('sqlContextSystem').checked ? 'system' : 'user';
+      const maxRows = parseInt(document.getElementById('sqlMaxRows').value || '{{ sql_default_rows }}', 10);
+      const memoryTurns = parseInt(document.getElementById('sqlMemoryTurns').value || '{{ sql_memory_turns }}', 10);
+      const systemPrompt = document.getElementById('sqlSystemPrompt').value.trim();
+      const persistentMemory = document.getElementById('sqlPersistentMemory')?.checked ?? false;
+      const loading = document.getElementById('searchLoading');
+      const btn = document.getElementById('searchBtn');
+      const sqlRow = document.getElementById('sqlResultsRow');
+      const sqlGenerated = document.getElementById('sqlGenerated');
+      const sqlError = document.getElementById('sqlError');
+      const sqlContextBadge = document.getElementById('sqlContextBadge');
+      if (!question) {
+        sqlRow.hidden = true;
+        return;
+      }
+      loading.hidden = false;
+      btn.disabled = true;
+      sqlGenerated.innerHTML = '';
+      if (sqlError) {
+        sqlError.hidden = true;
+        sqlError.innerHTML = '';
+      }
+      if (sqlContextBadge) {
+        sqlContextBadge.textContent = sqlContext === 'system' ? 'System catalog' : 'User schema';
+        sqlContextBadge.style.display = 'inline-block';
+      }
+      setTimingBadge('sqlTime', null);
+      try {
+        const res = await fetch('/api/sql-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            execute,
+            show_results: showResults,
+            space_id: state.spaceId,
+            max_rows: maxRows,
+            memory_turns: memoryTurns,
+            system_prompt: systemPrompt,
+            sql_context: sqlContext,
+            persistent_memory: persistentMemory
+          })
+        });
+        const contentType = res.headers.get('content-type') || '';
+        const data = contentType.includes('application/json') ? await res.json() : { error: await res.text() };
+        if (!res.ok) {
+          if (sqlError) {
+            const detail = data?.detail ? `<div>${escapeHtml(data.detail)}</div>` : '';
+            const errorLine = data?.error ? `<div><strong>${escapeHtml(data.error)}</strong></div>` : '<div><strong>SQL search failed</strong></div>';
+            sqlError.innerHTML = `${errorLine}${detail}`;
+            sqlError.hidden = false;
+          }
+          if (data?.sql) {
+            sqlGenerated.innerHTML = renderSqlBlocks([{ sql: data.sql }]);
+            sqlRow.hidden = false;
+          }
+          return;
+        }
+        const queries = Array.isArray(data.queries) ? data.queries : [{
+          sql: data.sql || '',
+          executed: data.executed,
+          columns: data.columns || [],
+          rows: data.rows || [],
+          elapsed_ms: data.elapsed_ms,
+          max_rows: data.max_rows
+        }];
+        sqlGenerated.innerHTML = renderSqlBlocks(queries, maxRows, showResults);
+        sqlRow.hidden = false;
+        if (data.elapsed_ms != null) {
+          setTimingBadge('sqlTime', data.elapsed_ms);
+        }
+        const rating = document.getElementById('sqlMemoryRating');
+        if (rating && persistentMemoryConfig.sqlEnabled && persistentMemory && data.memory_event_id) {
+          rating.hidden = false;
+          rating.dataset.memoryId = data.memory_event_id;
+        } else if (rating) {
+          rating.hidden = true;
+          rating.dataset.memoryId = '';
+        }
+      } catch (e) {
+        showToast('SQL search failed');
+        console.error(e);
+      } finally {
+        loading.hidden = true;
+        btn.disabled = false;
+      }
+    }
+
+    function buildSqlTable(columns, rows) {
+      const header = columns.map((c, idx) => `<th data-col="${idx}" role="button">${escapeHtml(c)} <span class="sort-indicator"></span></th>`).join('');
+      const body = rows.map(r => {
+        const cols = (r || []).map(v => `<td>${escapeHtml(v == null ? '' : String(v))}</td>`).join('');
+        return `<tr>${cols}</tr>`;
+      }).join('');
+      return `
+        <div class="sql-table">
+          <div class="sql-table-scroll">
+            <table>
+              <thead><tr>${header}</tr></thead>
+              <tbody>${body}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSqlBlocks(queries, maxRows, showResults) {
+      if (!queries || !queries.length) return '';
+      return queries.map((item, idx) => {
+        const label = queries.length > 1 ? `Query ${idx + 1}` : 'Query';
+        const sql = escapeHtml(item.sql || '');
+        const error = item.error ? `<div class="sql-error inline"><strong>${escapeHtml(item.error)}</strong><div>${escapeHtml(item.detail || '')}</div></div>` : '';
+        let resultsHtml = '';
+        if (item.executed && showResults) {
+          const columns = Array.isArray(item.columns) ? item.columns : [];
+          const rows = Array.isArray(item.rows) ? item.rows : [];
+          if (columns.length) {
+            resultsHtml = `
+              <div class="sql-results">
+                <label class="muted small">Results (max ${item.max_rows || maxRows} rows)</label>
+                ${buildSqlTable(columns, rows)}
+              </div>
+            `;
+          } else {
+            resultsHtml = `
+              <div class="sql-results">
+                <label class="muted small">Results (max ${item.max_rows || maxRows} rows)</label>
+                <div class="muted small">No rows returned.</div>
+              </div>
+            `;
+          }
+        }
+        return `
+          <div class="sql-block">
+            <div class="sql-block-title">${label}</div>
+            ${error}
+            <pre class="code-block">${sql}</pre>
+            ${resultsHtml}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function bindSqlTableSorting() {
+      const tables = document.querySelectorAll('.sql-results table');
+      tables.forEach((table) => {
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        const headers = table.querySelectorAll('th[data-col]');
+        headers.forEach((th) => {
+          if (th.dataset.bound === 'true') return;
+          th.dataset.bound = 'true';
+          th.addEventListener('click', () => {
+            const idx = parseInt(th.getAttribute('data-col'), 10);
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const current = th.getAttribute('data-sort') || 'none';
+            const next = current === 'asc' ? 'desc' : 'asc';
+            headers.forEach(h => { h.removeAttribute('data-sort'); h.querySelector('.sort-indicator').textContent = ''; });
+            th.setAttribute('data-sort', next);
+            th.querySelector('.sort-indicator').textContent = next === 'asc' ? '▲' : '▼';
+            rows.sort((a, b) => {
+              const aText = a.children[idx]?.textContent?.trim() ?? '';
+              const bText = b.children[idx]?.textContent?.trim() ?? '';
+              const aNum = parseFloat(aText.replace(/,/g, ''));
+              const bNum = parseFloat(bText.replace(/,/g, ''));
+              const bothNum = !Number.isNaN(aNum) && !Number.isNaN(bNum);
+              if (bothNum) {
+                return next === 'asc' ? aNum - bNum : bNum - aNum;
+              }
+              return next === 'asc' ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+            rows.forEach(r => tbody.appendChild(r));
+          });
+        });
+      });
+    }
+
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       const q = document.getElementById('query');
@@ -568,6 +857,8 @@
         e.preventDefault();
         if (searchMode === 'image') {
           doImageSearch();
+        } else if (searchMode === 'sql') {
+          doSqlSearch();
         } else {
           doSearch();
         }
@@ -581,28 +872,54 @@
       searchMode = 'text';
       document.getElementById('searchModeText').classList.add('active');
       document.getElementById('searchModeImage').classList.remove('active');
+      document.getElementById('searchModeSql').classList.remove('active');
       document.getElementById('imageSettings').hidden = true;
       document.getElementById('textSettings').hidden = false;
+      document.getElementById('sqlSettings').hidden = true;
+      document.getElementById('query').placeholder = 'Search...';
       clearImageResults();
       clearTextResults();
       document.getElementById('imageResultsRow').hidden = true;
+      document.getElementById('sqlResultsRow').hidden = true;
     });
 
     document.getElementById('searchModeImage').addEventListener('click', () => {
       searchMode = 'image';
       document.getElementById('searchModeImage').classList.add('active');
       document.getElementById('searchModeText').classList.remove('active');
+      document.getElementById('searchModeSql').classList.remove('active');
       document.getElementById('imageSettings').hidden = false;
       document.getElementById('textSettings').hidden = true;
+      document.getElementById('sqlSettings').hidden = true;
+      document.getElementById('query').placeholder = 'Search...';
       clearTextResults();
       clearImageResults();
       document.getElementById('resultsRow').hidden = true;
       document.getElementById('answerRow').hidden = true;
+      document.getElementById('sqlResultsRow').hidden = true;
+    });
+
+    document.getElementById('searchModeSql').addEventListener('click', () => {
+      searchMode = 'sql';
+      document.getElementById('searchModeSql').classList.add('active');
+      document.getElementById('searchModeText').classList.remove('active');
+      document.getElementById('searchModeImage').classList.remove('active');
+      document.getElementById('imageSettings').hidden = true;
+      document.getElementById('textSettings').hidden = true;
+      document.getElementById('sqlSettings').hidden = false;
+      document.getElementById('query').placeholder = 'Ask a SQL question...';
+      clearTextResults();
+      clearImageResults();
+      document.getElementById('resultsRow').hidden = true;
+      document.getElementById('answerRow').hidden = true;
+      document.getElementById('imageResultsRow').hidden = true;
     });
 
     document.getElementById('searchBtn').addEventListener('click', () => {
       if (searchMode === 'image') {
         doImageSearch();
+      } else if (searchMode === 'sql') {
+        doSqlSearch();
       } else {
         doSearch();
       }
@@ -938,6 +1255,7 @@
       const tags = document.getElementById('imageTags').value.trim();
       const topk = parseInt(document.getElementById('imageTopK').value || '12', 10);
       const file = document.getElementById('imageFile').files[0];
+      const persistentMemory = document.getElementById('imagePersistentMemory')?.checked ?? false;
       if (!query && !tags && !file) { showToast('Add a query, tags, or image'); return; }
       let body;
       if (file) {
@@ -946,9 +1264,10 @@
         body.append('query', query);
         if (tags) body.append('tags', tags);
         body.append('top_k', topk);
+        body.append('persistent_memory', persistentMemory ? 'true' : 'false');
         if (state.spaceId) body.append('space_id', state.spaceId);
       } else {
-        body = { query, tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [], top_k: topk, space_id: state.spaceId };
+        body = { query, tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [], top_k: topk, space_id: state.spaceId, persistent_memory: persistentMemory };
       }
       try {
         const data = await api('/api/image-search', { method: 'POST', body });
@@ -976,9 +1295,38 @@
           imageResults.appendChild(card);
         });
         imageRow.hidden = false;
+        const rating = document.getElementById('imageMemoryRating');
+        if (rating && persistentMemoryConfig.imageEnabled && persistentMemory && data.memory_event_id) {
+          rating.hidden = false;
+          rating.dataset.memoryId = data.memory_event_id;
+        } else if (rating) {
+          rating.hidden = true;
+          rating.dataset.memoryId = '';
+        }
       } catch (e) {
         showToast('Image search failed');
       }
+    }
+
+    function initMemoryRating(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const buttons = el.querySelectorAll('.thumb-btn');
+      buttons.forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const memoryId = el.dataset.memoryId;
+          if (!memoryId) return;
+          const rating = parseInt(btn.getAttribute('data-rating'), 10);
+          try {
+            await api(`/api/memory/${memoryId}/rate`, { method: 'POST', body: { rating } });
+            buttons.forEach(b => b.classList.toggle('active', b === btn));
+            const status = el.querySelector('.memory-rating-status');
+            if (status) status.textContent = rating === 1 ? 'Saved' : 'Noted';
+          } catch (e) {
+            showToast('Rating failed');
+          }
+        });
+      });
     }
 
     async function initUser() {
@@ -986,15 +1334,37 @@
         const me = await api('/api/me');
         state.user = me.user || null;
         state.spaces = me.spaces || [];
+        state.role = (me.user && me.user.role) ? me.user.role : 'user';
         const def = state.spaces.find(s => s.is_default);
         state.spaceId = def ? def.id : (state.spaces[0] ? state.spaces[0].id : null);
       } catch {
         state.user = null;
         state.spaces = [];
         state.spaceId = null;
+        state.role = 'user';
       }
       renderAccount();
       renderSpaces();
+      renderSqlMode();
+    }
+
+    function renderSqlMode() {
+      const sqlTab = document.getElementById('searchModeSql');
+      if (!sqlTab) return;
+      const allowed = state.role === 'analyst' || state.role === 'admin';
+      sqlTab.hidden = !allowed;
+      if (!allowed && searchMode === 'sql') {
+        document.getElementById('searchModeText').click();
+      }
+      const systemRadio = document.getElementById('sqlContextSystem');
+      const userRadio = document.getElementById('sqlContextUser');
+      if (systemRadio) {
+        systemRadio.disabled = state.role !== 'admin';
+      }
+      if (userRadio && systemRadio && state.role !== 'admin') {
+        userRadio.checked = true;
+        systemRadio.checked = false;
+      }
     }
 
     function renderAccount() {
@@ -1013,7 +1383,7 @@
         landing.hidden = true;
         search.hidden = false;
         upload.hidden = false;
-        document.getElementById('userEmail').textContent = state.user.email || '';
+        document.getElementById('userEmail').textContent = `${state.user.email || ''} (${state.role})`;
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
@@ -1309,7 +1679,73 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       initUser();
+      const storedContext = localStorage.getItem('sqlContext') || 'user';
+      const contextUser = document.getElementById('sqlContextUser');
+      const contextSystem = document.getElementById('sqlContextSystem');
+      const memoryInput = document.getElementById('sqlMemoryTurns');
+      if (contextUser && contextSystem) {
+        if (storedContext === 'system') {
+          contextSystem.checked = true;
+        } else {
+          contextUser.checked = true;
+        }
+        contextUser.addEventListener('change', () => {
+          if (contextUser.checked) localStorage.setItem('sqlContext', 'user');
+        });
+        contextSystem.addEventListener('change', () => {
+          if (contextSystem.checked) localStorage.setItem('sqlContext', 'system');
+        });
+      }
+      if (memoryInput) {
+        const storedMemory = localStorage.getItem('sqlMemoryTurns');
+        if (storedMemory !== null && storedMemory !== '') {
+          memoryInput.value = storedMemory;
+        }
+        memoryInput.addEventListener('change', () => {
+          const value = Math.max(0, parseInt(memoryInput.value || '0', 10));
+          memoryInput.value = String(value);
+          localStorage.setItem('sqlMemoryTurns', String(value));
+        });
+      }
+      const textMemoryToggle = document.getElementById('textPersistentMemory');
+      if (textMemoryToggle) {
+        const stored = localStorage.getItem('textPersistentMemory');
+        if (stored !== null) {
+          textMemoryToggle.checked = stored === 'true';
+        }
+        textMemoryToggle.addEventListener('change', () => {
+          localStorage.setItem('textPersistentMemory', textMemoryToggle.checked ? 'true' : 'false');
+        });
+      }
+      const imageMemoryToggle = document.getElementById('imagePersistentMemory');
+      if (imageMemoryToggle) {
+        const stored = localStorage.getItem('imagePersistentMemory');
+        if (stored !== null) {
+          imageMemoryToggle.checked = stored === 'true';
+        }
+        imageMemoryToggle.addEventListener('change', () => {
+          localStorage.setItem('imagePersistentMemory', imageMemoryToggle.checked ? 'true' : 'false');
+        });
+      }
+      const sqlMemoryToggle = document.getElementById('sqlPersistentMemory');
+      if (sqlMemoryToggle) {
+        const stored = localStorage.getItem('sqlPersistentMemory');
+        if (stored !== null) {
+          sqlMemoryToggle.checked = stored === 'true';
+        }
+        sqlMemoryToggle.addEventListener('change', () => {
+          localStorage.setItem('sqlPersistentMemory', sqlMemoryToggle.checked ? 'true' : 'false');
+        });
+      }
+      initMemoryRating('textMemoryRating');
+      initMemoryRating('imageMemoryRating');
+      initMemoryRating('sqlMemoryRating');
     });
+
+    const sqlObserver = new MutationObserver(() => {
+      bindSqlTableSorting();
+    });
+    sqlObserver.observe(document.getElementById('sqlGenerated'), { childList: true, subtree: true });
   </script>
 </body>
 </html>
