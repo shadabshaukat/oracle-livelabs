@@ -132,6 +132,7 @@ def rag(
     *,
     user_id: Optional[int] = None,
     space_id: Optional[int] = None,
+    memory_context: Optional[str] = None,
     return_timings: bool = False,
 ) -> Tuple[str, List[ChunkHit], bool] | Tuple[str, List[ChunkHit], bool, Dict[str, Optional[int]]]:
     logger.info("rag: query=%r mode=%s top_k=%s provider=%s", query, mode, top_k, settings.llm_provider)
@@ -146,6 +147,8 @@ def rag(
     db_ms = int(round((perf_counter() - db_start) * 1000))
 
     context = "\n\n".join(h.content for h in hits)
+    if memory_context:
+        context = f"Memory context:\n{memory_context}\n\n{context}"
     logger.info("rag: context_chars=%d hits=%d", len(context), len(hits))
 
     answer = context
@@ -215,8 +218,10 @@ def image_search(query: Optional[str], vector: Optional[List[float]], top_k: int
         where.append("ia.tags @> %s::jsonb")
         filter_params.append(json.dumps(tags))
     if query and vector is None:
-        where.append("(ia.caption ILIKE %s OR COALESCE(d.metadata->>'image_caption','') ILIKE %s)")
-        filter_params.extend([f"%{query}%", f"%{query}%"])
+        where.append(
+            "(ia.caption ILIKE %s OR COALESCE(d.metadata->>'image_caption','') ILIKE %s OR COALESCE(ia.ocr_text,'') ILIKE %s)"
+        )
+        filter_params.extend([f"%{query}%", f"%{query}%", f"%{query}%"])
     if vector is not None:
         where.append("ia.embedding IS NOT NULL")
 
@@ -235,7 +240,7 @@ def image_search(query: Optional[str], vector: Optional[List[float]], top_k: int
     if query:
         rank_value_expr = (
             "ts_rank_cd("
-            "to_tsvector('simple', COALESCE(ia.caption,'') || ' ' || COALESCE(d.metadata->>'image_caption','')), "
+            "to_tsvector('simple', COALESCE(ia.caption,'') || ' ' || COALESCE(d.metadata->>'image_caption','') || ' ' || COALESCE(ia.ocr_text,'')), "
             "plainto_tsquery('simple', %s)"
             ")"
         )
@@ -243,7 +248,7 @@ def image_search(query: Optional[str], vector: Optional[List[float]], top_k: int
         rank_params.append(query)
 
     sql = [
-        "SELECT ia.id, ia.document_id, ia.file_path, ia.thumbnail_path, ia.caption, ia.tags, ia.width, ia.height, ia.created_at,",
+        "SELECT ia.id, ia.document_id, ia.file_path, ia.thumbnail_path, ia.caption, ia.ocr_text, ia.tags, ia.width, ia.height, ia.created_at,",
         distance_expr + ",",
         rank_expr,
         "FROM image_assets ia",
@@ -283,7 +288,7 @@ def image_search(query: Optional[str], vector: Optional[List[float]], top_k: int
             cur.execute(query_str, params)
             rows = cur.fetchall()
     for row in rows:
-        image_id, doc_id, file_path, thumb_path, caption, tags_raw, width, height, created_at, distance, text_rank = row
+        image_id, doc_id, file_path, thumb_path, caption, ocr_text, tags_raw, width, height, created_at, distance, text_rank = row
         parsed_tags: List[str]
         if isinstance(tags_raw, list):
             parsed_tags = tags_raw
@@ -298,6 +303,7 @@ def image_search(query: Optional[str], vector: Optional[List[float]], top_k: int
             "file_path": file_path,
             "thumbnail_path": thumb_path,
             "caption": caption,
+            "ocr_text": ocr_text,
             "tags": parsed_tags,
             "width": width,
             "height": height,

@@ -22,6 +22,8 @@ from .vision_embeddings import (
     generate_image_caption,
     CaptioningModelUnavailable,
     VisionModelUnavailable,
+    ocr_image_text,
+    OcrUnavailable,
     vision_dependencies_ready,
 )
 from .pgvector_utils import to_vec_literal
@@ -400,6 +402,17 @@ def _process_image_asset(
         logger.warning("Image captioning unavailable for %s: %s", file_path, exc)
     except Exception:
         logger.exception("Image captioning failed for %s", file_path)
+
+    ocr_text = ""
+    if settings.ocr_enabled:
+        try:
+            ocr_text = ocr_image_text(file_path)
+            if ocr_text:
+                tags.extend(_keywords_from_caption(ocr_text))
+        except OcrUnavailable as exc:
+            logger.warning("OCR unavailable for %s: %s", file_path, exc)
+        except Exception:
+            logger.exception("OCR failed for %s", file_path)
     vec = None
     try:
         emb = embed_image_paths([file_path])
@@ -433,8 +446,8 @@ def _process_image_asset(
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO image_assets (document_id, user_id, space_id, file_path, thumbnail_path, width, height, tags, caption, embedding, embedding_model)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
+            INSERT INTO image_assets (document_id, user_id, space_id, file_path, thumbnail_path, width, height, tags, caption, ocr_text, embedding, embedding_model)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
             """,
             (
                 doc_id,
@@ -446,6 +459,7 @@ def _process_image_asset(
                 height,
                 json.dumps(tags),
                 caption,
+                ocr_text,
                 to_vec_literal(vec) if vec else None,
                 settings.image_embed_model,
             ),
@@ -456,6 +470,7 @@ def _process_image_asset(
             "thumbnail_object_url": None,
             "image_tags": tags,
             "image_caption": caption,
+            "ocr_text": ocr_text,
             "image_width": width,
             "image_height": height,
         }

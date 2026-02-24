@@ -106,6 +106,26 @@ uv sync && uv run searchapp
 
 This starts FastAPI at http://0.0.0.0:8000. The UI is available at http://0.0.0.0:8000/
 
+## Fresh Database Bootstrap (V3 schema)
+
+Use the consolidated schema script when provisioning a new database:
+
+```bash
+psql "$DATABASE_URL" -f schema_v3.sql
+```
+
+You can override schema parameters (embedding dims, metric, lists, FTS config) using psql \set variables:
+
+```bash
+psql "$DATABASE_URL" \
+  -v EMBEDDING_DIM=384 \
+  -v IMAGE_EMBED_DIM=768 \
+  -v PGVECTOR_METRIC=cosine \
+  -v PGVECTOR_LISTS=100 \
+  -v FTS_CONFIG=english \
+  -f schema_v3.sql
+```
+
 ## Oracle Linux 8 prerequisites and firewall
 
 ```bash

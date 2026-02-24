@@ -19,6 +19,52 @@ class CaptioningModelUnavailable(RuntimeError):
     pass
 
 
+class OcrUnavailable(RuntimeError):
+    pass
+
+
+def ocr_image_text(path: str) -> str:
+    if not settings.ocr_enabled:
+        return ""
+    engine = (settings.ocr_engine or "tesseract").lower()
+    if engine != "tesseract":
+        raise OcrUnavailable(f"Unsupported OCR engine: {engine}")
+    try:
+        import pytesseract  # type: ignore
+        from PIL import Image  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise OcrUnavailable(
+            "pytesseract is not installed. Install with `pip install pytesseract` and ensure Tesseract is available."
+        ) from exc
+    try:
+        image = Image.open(path).convert("RGB")
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        words = []
+        confs = data.get("conf", [])
+        texts = data.get("text", [])
+        for conf, word in zip(confs, texts):
+            try:
+                conf_val = float(conf)
+            except (TypeError, ValueError):
+                conf_val = -1.0
+            cleaned_word = (word or "").strip()
+            if conf_val > 0 and cleaned_word:
+                words.append(cleaned_word)
+        if not words:
+            return ""
+        text = " ".join(words)
+    except Exception as exc:
+        raise OcrUnavailable(str(exc)) from exc
+    if not text:
+        return ""
+    cleaned = " ".join(text.split())
+    if settings.ocr_min_chars and len(cleaned) < settings.ocr_min_chars:
+        return ""
+    if settings.ocr_max_chars and len(cleaned) > settings.ocr_max_chars:
+        cleaned = cleaned[: settings.ocr_max_chars]
+    return cleaned
+
+
 @lru_cache(maxsize=1)
 def _get_clip_model():
     try:

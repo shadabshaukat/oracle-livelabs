@@ -103,6 +103,12 @@ class Settings:
     image_caption_prompt: str = os.getenv("IMAGE_CAPTION_PROMPT", "Describe the image in detail.")
     image_caption_timeout_s: int = int(os.getenv("IMAGE_CAPTION_TIMEOUT_S", "60"))
 
+    # OCR (image text extraction)
+    ocr_enabled: bool = _get_bool("OCR_ENABLED", True)
+    ocr_engine: str = os.getenv("OCR_ENGINE", "tesseract").lower()
+    ocr_min_chars: int = int(os.getenv("OCR_MIN_CHARS", "12"))
+    ocr_max_chars: int = int(os.getenv("OCR_MAX_CHARS", "8000"))
+
     # pgvector index
     pgvector_metric: str = os.getenv("PGVECTOR_METRIC", "cosine")  # cosine|l2|ip
     pgvector_lists: int = int(os.getenv("PGVECTOR_LISTS", "1000"))  # tune for 10M (~sqrt(n))
@@ -134,6 +140,22 @@ class Settings:
     oci_fingerprint: Optional[str] = os.getenv("OCI_FINGERPRINT")
     oci_private_key_path: Optional[str] = os.getenv("OCI_PRIVATE_KEY_PATH")
     oci_private_key_passphrase: Optional[str] = os.getenv("OCI_PRIVATE_KEY_PASSPHRASE")
+
+    # NL2SQL
+    sql_max_rows: int = int(os.getenv("SQL_MAX_ROWS", "200"))
+    sql_default_rows: int = int(os.getenv("SQL_DEFAULT_ROWS", "200"))
+    sql_memory_turns: int = int(os.getenv("SQL_MEMORY_TURNS", "10"))
+    sql_persistent_memory_enabled: bool = _get_bool("SQL_PERSISTENT_MEMORY_ENABLED", False)
+    text_persistent_memory_enabled: bool = _get_bool("TEXT_PERSISTENT_MEMORY_ENABLED", False)
+    image_persistent_memory_enabled: bool = _get_bool("IMAGE_PERSISTENT_MEMORY_ENABLED", False)
+    persistent_memory_top_k: int = int(os.getenv("PERSISTENT_MEMORY_TOP_K", "5"))
+    persistent_memory_max_chars: int = int(os.getenv("PERSISTENT_MEMORY_MAX_CHARS", "4000"))
+    persistent_memory_summary_max_chars: int = int(os.getenv("PERSISTENT_MEMORY_SUMMARY_MAX_CHARS", "1200"))
+    sql_system_prompt: str = os.getenv(
+        "SQL_SYSTEM_PROMPT",
+        "You are an expert PostgreSQL (v14-v18) SQL assistant. Produce accurate, executable SELECT-only SQL and never hallucinate tables or columns."
+        " Use only the provided schema/context. If needed, re-check the schema before answering.",
+    )
 
 
 def build_database_url(s: Settings) -> str:

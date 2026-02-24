@@ -26,7 +26,15 @@ def verify_password(password: str, password_hash: str) -> bool:
 def get_user_by_email(email: str) -> Optional[dict]:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, email, password_hash, created_at, last_login_at FROM users WHERE email = %s", (email,))
+            cur.execute(
+                """
+                SELECT u.id, u.email, u.password_hash, u.created_at, u.last_login_at, r.name
+                FROM users u
+                LEFT JOIN roles r ON r.id = u.role_id
+                WHERE u.email = %s
+                """,
+                (email,),
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -36,13 +44,22 @@ def get_user_by_email(email: str) -> Optional[dict]:
                 "password_hash": row[2],
                 "created_at": (row[3].isoformat() if row[3] else None),
                 "last_login_at": (row[4].isoformat() if row[4] else None),
+                "role": row[5] or "user",
             }
 
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, email, password_hash, created_at, last_login_at FROM users WHERE id = %s", (user_id,))
+            cur.execute(
+                """
+                SELECT u.id, u.email, u.password_hash, u.created_at, u.last_login_at, r.name
+                FROM users u
+                LEFT JOIN roles r ON r.id = u.role_id
+                WHERE u.id = %s
+                """,
+                (user_id,),
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -52,6 +69,7 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
                 "password_hash": row[2],
                 "created_at": (row[3].isoformat() if row[3] else None),
                 "last_login_at": (row[4].isoformat() if row[4] else None),
+                "role": row[5] or "user",
             }
 
 
@@ -60,12 +78,16 @@ def create_user(email: str, password: str) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id",
+                """
+                INSERT INTO users (email, password_hash, role_id)
+                VALUES (%s, %s, (SELECT id FROM roles WHERE name = 'user'))
+                RETURNING id
+                """,
                 (email, ph),
             )
             uid = int(cur.fetchone()[0])
     ensure_default_space(uid)
-    return {"id": uid, "email": email}
+    return {"id": uid, "email": email, "role": "user"}
 
 
 def authenticate_user(email: str, password: str) -> Optional[dict]:
@@ -77,7 +99,7 @@ def authenticate_user(email: str, password: str) -> Optional[dict]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE users SET last_login_at = now() WHERE id = %s", (u["id"],))
-    return {"id": u["id"], "email": u["email"]}
+    return {"id": u["id"], "email": u["email"], "role": u.get("role") or "user"}
 
 
 def ensure_default_space(user_id: int) -> int:
