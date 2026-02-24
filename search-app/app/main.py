@@ -72,7 +72,15 @@ def on_startup():
 # UI route (minimalist, responsive search app)
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "upload_max_mb": settings.max_upload_size_mb,
+            "upload_max_files": settings.max_files_per_space,
+            "upload_allowed_exts": settings.allowed_upload_extensions,
+        },
+    )
 
 
 # API routes
@@ -186,9 +194,32 @@ async def upload(request: Request, files: List[UploadFile] = File(...), space_id
     uid = int(user.get("user_id") or user.get("id"))
     uemail = user.get("email")
     sid = int(space_id) if space_id is not None else get_default_space_id(uid)
+    allowed_exts = _allowed_upload_extensions()
+    try:
+        _enforce_space_upload_limit(uid, sid, len(files))
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     results: List[Dict[str, Any]] = []
     for f in files:
+        if not _is_allowed_filename(f.filename or "", allowed_exts):
+            results.append(
+                {
+                    "filename": f.filename or "",
+                    "error": "unsupported file type",
+                    "status": "error",
+                }
+            )
+            continue
         data = await f.read()
+        if len(data) > settings.max_upload_size_mb * 1024 * 1024:
+            results.append(
+                {
+                    "filename": f.filename or "",
+                    "error": f"file too large (> {settings.max_upload_size_mb} MB)",
+                    "status": "error",
+                }
+            )
+            continue
         local_path, obj_provider, obj_bucket, obj_name = save_upload(data, Path(f.filename).name, user_email=uemail)
         # Use basename as title and include original filename and optional object URL in metadata
         title = Path(f.filename).name
@@ -1168,6 +1199,40 @@ def _extract_object_name_from_url(url: Any) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+def _allowed_upload_extensions() -> set[str]:
+    raw = settings.allowed_upload_extensions or ""
+    exts = {e.strip().lower() for e in raw.split(",") if e.strip()}
+    normalized = set()
+    for ext in exts:
+        if not ext.startswith("."):
+            normalized.add(f".{ext}")
+        else:
+            normalized.add(ext)
+    return normalized
+
+
+def _is_allowed_filename(filename: str, allowed_exts: set[str]) -> bool:
+    if not filename:
+        return False
+    ext = Path(filename).suffix.lower()
+    return ext in allowed_exts if allowed_exts else True
+
+
+def _enforce_space_upload_limit(user_id: int, space_id: int | None, incoming_count: int) -> None:
+    if settings.max_files_per_space <= 0:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if space_id is None:
+                cur.execute("SELECT count(*) FROM documents WHERE user_id = %s", (user_id,))
+            else:
+                cur.execute("SELECT count(*) FROM documents WHERE user_id = %s AND space_id = %s", (user_id, space_id))
+            existing = int(cur.fetchone()[0])
+    if existing + incoming_count > settings.max_files_per_space:
+        remaining = max(settings.max_files_per_space - existing, 0)
+        raise ValueError(f"space upload limit reached (max {settings.max_files_per_space}). Remaining: {remaining}")
 
 
 if __name__ == "__main__":

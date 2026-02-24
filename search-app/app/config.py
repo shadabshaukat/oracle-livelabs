@@ -45,6 +45,11 @@ class Settings:
     s3_secret_access_key: Optional[str] = os.getenv("S3_SECRET_ACCESS_KEY")
     # Upload & parsing
     max_upload_size_mb: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
+    max_files_per_space: int = int(os.getenv("MAX_FILES_PER_SPACE", "100"))
+    allowed_upload_extensions: str = os.getenv(
+        "ALLOWED_UPLOAD_EXTENSIONS",
+        ".pdf,.docx,.doc,.txt,.html,.htm,.md,.csv,.json,.xml,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.bmp",
+    )
     use_pymupdf: bool = _get_bool("USE_PYMUPDF", False)
     # Upload lifecycle
     delete_uploaded_after_ingest: bool = _get_bool("DELETE_UPLOADED_FILES", False)

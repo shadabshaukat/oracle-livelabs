@@ -50,8 +50,9 @@ cp .env.example .env
 Update `.env` with:
 - `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` (or `DATABASE_URL`)
 - `LLM_PROVIDER=oci` + OCI GenAI credentials
-- `STORAGE_BACKEND=local|oci|both`
+- `STORAGE_BACKEND=local|oci|s3|both`
 - `OCI_OS_BUCKET_NAME` if using OCI storage
+- Upload limits: `MAX_UPLOAD_SIZE_MB` (per-file), `MAX_FILES_PER_SPACE`, `ALLOWED_UPLOAD_EXTENSIONS`
 
 ### Install + Run
 
@@ -86,7 +87,7 @@ These install:
 ## 5) Recommended Production Patterns
 
 - Run on OCI Compute with private access to the DB.
-- Store uploads in OCI Object Storage.
+- Store uploads in OCI Object Storage (object identifiers stored; SDK streaming endpoints; no PAR URLs).
 - Use systemd for the API service.
 - Restrict CORS + rotate credentials.
 
@@ -153,5 +154,5 @@ To refine this:
 - Store secrets in OCI Vault or environment variables (never commit .env).
 - Restrict DB access to private subnet/NSG rules.
 - Enable HTTPS in front of FastAPI (NGINX/OCI LB).
-- Limit upload size (`MAX_UPLOAD_SIZE_MB`) and validate file types.
+- Limit upload size (`MAX_UPLOAD_SIZE_MB` per file), validate file types, and cap per-space uploads (`MAX_FILES_PER_SPACE`).
 - Enable OS-level firewall; only expose port 8000 via trusted networks.

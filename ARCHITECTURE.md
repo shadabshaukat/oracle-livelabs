@@ -25,14 +25,14 @@ This document provides a full, in-depth view of the system architecture, focusin
 
 5) **Storage Layer**
    - Local filesystem: `storage/uploads/...`
-   - Optional OCI Object Storage: objects + thumbnails, URLs stored in metadata.
+   - Optional OCI Object Storage: objects + thumbnails, **object identifiers stored in metadata**; downloads/thumbnails streamed via OCI SDK (no PAR URLs).
 
 ## Text Ingestion Lifecycle (End-to-End)
 
 1) **Upload**
    - UI or `/api/upload` receives files.
    - File saved locally (`storage/uploads/<user>/<date>/<time>/file.ext`).
-   - If `STORAGE_BACKEND=oci|both`, file is mirrored to Object Storage and URL saved in metadata.
+   - If `STORAGE_BACKEND=oci|both`, file is mirrored to Object Storage and object identifiers (provider/bucket/object name) are saved in metadata; downloads/thumbnails are served by SDK-backed endpoints.
 
 2) **Text Extraction** (`text_utils.py`)
    - PDF: PyMuPDF → pypdf → pdfplumber fallback.
@@ -54,7 +54,7 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Indexes: GIN(content_tsv) and IVFFlat(embedding).
 
 5) **Persist**
-   - `documents` table stores metadata + original file path + object URLs.
+   - `documents` table stores metadata + original file path + object identifiers (provider/bucket/object name).
    - `chunks` table stores chunk content and embeddings.
 
 ## Text Search Lifecycle
@@ -80,7 +80,7 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Saved locally; optionally mirrored to Object Storage.
 
 2) **Image Processing** (`store.py`)
-   - Generate thumbnail (512px max) stored under `storage/uploads/thumbnails/`.
+   - Generate thumbnail (512px max) stored under `storage/uploads/thumbnails/` (and mirrored to Object Storage when enabled).
    - Optional captioning model generates description + keywords.
 
 3) **Image Embedding** (`vision_embeddings.py`)
@@ -91,7 +91,7 @@ This document provides a full, in-depth view of the system architecture, focusin
      - `file_path`, `thumbnail_path`
      - tags, caption
      - embedding vector
-   - Document metadata updated with `thumbnail_object_url`, caption, dimensions, tags.
+   - Document metadata updated with `thumbnail_object_name`, caption, dimensions, tags.
 
 ## Image Search Lifecycle
 
@@ -109,6 +109,12 @@ This document provides a full, in-depth view of the system architecture, focusin
 4) **Render**
    - API returns `thumbnail_url` (`/api/image-assets/{id}/thumbnail`).
    - UI displays cards with thumbnail, caption, tags, score.
+
+## Model Caching (Text + Image)
+
+- Text embeddings model and image models are cached locally under `MODEL_CACHE_DIR` (default `storage/models`).
+- The app sets `HF_HOME`, `TRANSFORMERS_CACHE`, and `SENTENCE_TRANSFORMERS_HOME` to this directory and uses `cache_dir` for OpenCLIP to speed repeated loads.
+- Models are loaded once per process via `lru_cache` to avoid reinitialization overhead.
 
 ## Security & Auth
 
