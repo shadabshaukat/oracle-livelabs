@@ -707,12 +707,7 @@ async def api_kb(
     return {"documents": items, "limit": int(limit), "offset": int(offset), "total": int(total)}
 
 
-@app.delete("/api/documents/{doc_id}")
-async def api_delete_document(request: Request, doc_id: int):
-    user = await get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    uid = int(user.get("user_id") or user.get("id"))
+def _delete_document_by_id(uid: int, doc_id: int) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -721,7 +716,7 @@ async def api_delete_document(request: Request, doc_id: int):
             )
             row = cur.fetchone()
             if not row:
-                return JSONResponse(status_code=404, content={"error": "not found"})
+                raise ValueError("not_found")
             source_path = row[0] or ""
             obj_provider = row[1]
             obj_bucket = row[2]
@@ -755,6 +750,30 @@ async def api_delete_document(request: Request, doc_id: int):
         logger.warning("Failed to delete object storage source for doc_id=%s", doc_id)
 
     return {"ok": True, "document_id": int(doc_id)}
+
+
+@app.delete("/api/documents/{doc_id}")
+async def api_delete_document(request: Request, doc_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        return _delete_document_by_id(uid, doc_id)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+
+@app.post("/api/documents/{doc_id}/delete")
+async def api_delete_document_post(request: Request, doc_id: int):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        return _delete_document_by_id(uid, doc_id)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"error": "not found"})
 
 
 @app.get("/api/me")

@@ -974,7 +974,7 @@
       const ok = confirm(`Delete ${title || 'this document'}? This cannot be undone.`);
       if (!ok) return;
       try {
-        await api(`/api/documents/${docId}`, { method: 'DELETE' });
+        await api(`/api/documents/${docId}/delete`, { method: 'POST' });
         showToast('Deleted');
         loadLibrary();
       } catch {
@@ -1111,7 +1111,7 @@
       let failures = 0;
       for (const id of ids) {
         try {
-          await api(`/api/documents/${id}`, { method: 'DELETE' });
+          await api(`/api/documents/${id}/delete`, { method: 'POST' });
         } catch {
           failures += 1;
         }
