@@ -220,17 +220,81 @@ def init_db(s: Settings = settings) -> None:
 
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS user_activity (
-                    id BIGSERIAL PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS search_sessions (
+                    id BIGSERIAL,
+                    session_id TEXT NOT NULL,
                     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    activity_type TEXT NOT NULL,
-                    details JSONB DEFAULT '{}'::jsonb,
-                    created_at TIMESTAMPTZ DEFAULT now()
-                );
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+                    name TEXT,
+                    last_ip TEXT,
+                    last_user_agent TEXT,
+                    first_activity_at TIMESTAMPTZ DEFAULT now(),
+                    last_activity_at TIMESTAMPTZ DEFAULT now(),
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (session_id)
+                ) PARTITION BY HASH (session_id);
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_sessions_p0
+                  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_sessions_p1
+                  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_sessions_p2
+                  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_sessions_p3
+                  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 3);
+                """
+            )
+            cur.execute("ALTER TABLE search_sessions ADD COLUMN IF NOT EXISTS last_ip TEXT")
+            cur.execute("ALTER TABLE search_sessions ADD COLUMN IF NOT EXISTS last_user_agent TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_sessions_user_time ON search_sessions(user_id, last_activity_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_sessions_space_time ON search_sessions(space_id, last_activity_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_sessions_id ON search_sessions(id)")
 
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_activity_user_time ON user_activity(user_id, created_at DESC)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_activity (
+                    id BIGSERIAL,
+                    session_id TEXT NOT NULL,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+                    activity_type TEXT NOT NULL,
+                    request_payload JSONB DEFAULT '{}'::jsonb,
+                    response_payload JSONB DEFAULT '{}'::jsonb,
+                    summary TEXT,
+                    client_ip TEXT,
+                    user_agent TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (id, created_at)
+                ) PARTITION BY RANGE (created_at);
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_activity_default
+                  PARTITION OF search_activity DEFAULT;
+                """
+            )
+            cur.execute("ALTER TABLE search_activity ADD COLUMN IF NOT EXISTS client_ip TEXT")
+            cur.execute("ALTER TABLE search_activity ADD COLUMN IF NOT EXISTS user_agent TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_activity_session_time ON search_activity(session_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_activity_user_time ON search_activity(user_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_activity_space_time ON search_activity(space_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_search_activity_type_time ON search_activity(activity_type, created_at DESC)")
 
             cur.execute(
                 f"""

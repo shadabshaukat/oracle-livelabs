@@ -170,7 +170,7 @@ def rag(
                 model=settings.openai_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=512,
+                max_tokens=settings.rag_max_tokens,
             )
             llm_ms = int(round((perf_counter() - llm_start) * 1000))
             out = resp.choices[0].message.content
@@ -184,7 +184,7 @@ def rag(
             from .oci_llm import oci_chat_completion
             logger.info("rag: calling OCI GenAI")
             llm_start = perf_counter()
-            out = oci_chat_completion(query, context)
+            out = oci_chat_completion(query, context, max_tokens=settings.rag_max_tokens)
             llm_ms = int(round((perf_counter() - llm_start) * 1000))
             if out:
                 answer = out

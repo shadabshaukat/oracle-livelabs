@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from collections import defaultdict, deque
 from tempfile import NamedTemporaryFile
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, File, UploadFile, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,8 +26,8 @@ from .store import ensure_dirs, ingest_file_path, save_upload
 from .object_storage import default_object_bucket, get_object_store, resolve_object_provider
 from .search import semantic_search, fulltext_search, hybrid_search, rag, image_search
 from .embeddings import get_model, embed_texts
-from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers
-from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space
+from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers, generate_session_id
+from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space, get_user_by_id
 from .vision_embeddings import embed_image_paths, embed_image_texts, VisionModelUnavailable
 from .oci_llm import oci_chat_completion
 from .pgvector_utils import to_vec_literal
@@ -280,6 +281,153 @@ def _persist_memory_event(
             )
             row = cur.fetchone()
             return int(row[0]) if row else None
+
+
+def _json_dumps(value: Any) -> str:
+    try:
+        return json.dumps(value, default=str)
+    except Exception:
+        return json.dumps({})
+
+
+def _get_client_ip(request: Request) -> Optional[str]:
+    forwarded = request.headers.get("x-forwarded-for") or ""
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+    return request.client.host if request.client else None
+
+
+def _get_user_agent(request: Request) -> Optional[str]:
+    return request.headers.get("user-agent")
+
+
+def _get_account_prefix(user_id: int) -> str:
+    try:
+        user = get_user_by_id(user_id)
+    except Exception:
+        user = None
+    email = (user or {}).get("email") or ""
+    account_prefix = (email.split("@", 1)[0] if "@" in email else email).strip().lower()
+    return account_prefix or f"user{user_id}"
+
+
+def _build_session_name(*, account_prefix: str, space_id: int, session_seq: int) -> str:
+    return f"{account_prefix}-{space_id}-{session_seq}"
+
+
+def _upsert_search_session(
+    *,
+    session_id: str,
+    user_id: int,
+    space_id: Optional[int],
+    name: Optional[str],
+    client_ip: Optional[str],
+    user_agent: Optional[str],
+) -> tuple[int, Optional[str]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO search_sessions
+                    (session_id, user_id, space_id, name, last_ip, last_user_agent, first_activity_at, last_activity_at)
+                VALUES (%s, %s, %s, %s, %s, %s, now(), now())
+                ON CONFLICT (session_id) DO UPDATE
+                SET last_activity_at = EXCLUDED.last_activity_at,
+                    space_id = COALESCE(EXCLUDED.space_id, search_sessions.space_id),
+                    name = COALESCE(search_sessions.name, EXCLUDED.name),
+                    last_ip = COALESCE(EXCLUDED.last_ip, search_sessions.last_ip),
+                    last_user_agent = COALESCE(EXCLUDED.last_user_agent, search_sessions.last_user_agent)
+                RETURNING id, name
+                """,
+                (session_id, user_id, space_id, name, client_ip, user_agent),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("search_session_upsert_failed")
+            return int(row[0]), row[1]
+
+
+def _ensure_session_name(
+    *,
+    session_id: str,
+    user_id: int,
+    space_id: int,
+    session_seq: int,
+    current_name: Optional[str],
+) -> str:
+    if current_name:
+        return current_name
+    account_prefix = _get_account_prefix(user_id)
+    final_name = _build_session_name(account_prefix=account_prefix, space_id=space_id, session_seq=session_seq)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE search_sessions SET name = %s WHERE session_id = %s AND name IS NULL",
+                (final_name, session_id),
+            )
+    return final_name
+
+
+def _log_search_activity(
+    *,
+    user: dict,
+    space_id: Optional[int],
+    activity_type: str,
+    request_payload: dict,
+    response_payload: dict,
+    summary: str,
+    session_name: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> None:
+    session_id = user.get("session_id") or user.get("sid")
+    if not session_id:
+        return
+    uid = int(user.get("user_id") or user.get("id"))
+    try:
+        client_ip = _get_client_ip(request) if request else None
+        user_agent = _get_user_agent(request) if request else None
+        session_space_id = space_id
+        if session_space_id is None:
+            session_space_id = get_default_space_id(uid)
+        if session_space_id is None:
+            raise ValueError("default_space_missing")
+        session_seq, current_name = _upsert_search_session(
+            session_id=session_id,
+            user_id=uid,
+            space_id=session_space_id,
+            name=session_name,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        _ensure_session_name(
+            session_id=session_id,
+            user_id=uid,
+            space_id=session_space_id,
+            session_seq=session_seq,
+            current_name=current_name,
+        )
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO search_activity
+                        (session_id, user_id, space_id, activity_type, request_payload, response_payload, summary, client_ip, user_agent)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+                    """,
+                    (
+                        session_id,
+                        uid,
+                        space_id,
+                        activity_type,
+                        _json_dumps(request_payload or {}),
+                        _json_dumps(response_payload or {}),
+                        summary or "",
+                        client_ip,
+                        user_agent,
+                    ),
+                )
+    except Exception:
+        logger.exception("Failed to log search activity")
 
 
 # API routes
@@ -558,6 +706,7 @@ async def api_search(request: Request, payload: Dict[str, Any]):
     if answer is not None:
         out["answer"] = answer
         out["used_llm"] = bool(used_llm)
+        out["llm_response"] = answer if used_llm else ""
         # Include top references for UI (file name/type and chunk anchor)
         refs = []
         for e in hits_out[: min(len(hits_out), 5)]:
@@ -588,6 +737,27 @@ async def api_search(request: Request, payload: Dict[str, Any]):
             metadata={"mode": mode, "top_k": top_k},
         )
         out["memory_event_id"] = memory_event_id
+    summary = f"{mode.upper()} · {q[:120]}" if q else f"{mode.upper()}"
+    session_name = (q or "").strip()[:80] or None
+    request_payload = {
+        "query": q,
+        "mode": mode,
+        "top_k": top_k,
+        "space_id": sid,
+        "persistent_memory": persistent_memory_requested,
+        "user": {"id": uid, "email": user.get("email"), "role": user.get("role")},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _log_search_activity(
+        user=user,
+        space_id=sid,
+        activity_type=f"text_{mode}",
+        request_payload=request_payload,
+        response_payload=out,
+        summary=summary,
+        session_name=session_name,
+        request=request,
+    )
     return out
 
 
@@ -729,6 +899,35 @@ async def api_image_search(request: Request):
             metadata={"top_k": top_k, "tags": tag_filter},
         )
         response["memory_event_id"] = memory_event_id
+    summary_parts = []
+    if query:
+        summary_parts.append(query)
+    if tag_filter:
+        summary_parts.append("tags: " + ", ".join(tag_filter[:4]))
+    if reference_file is not None:
+        summary_parts.append("reference image")
+    summary = "Image · " + " · ".join(summary_parts) if summary_parts else "Image search"
+    session_name = (query or "").strip()[:80] or ("Image search" if reference_file or tag_filter else None)
+    request_payload = {
+        "query": query,
+        "tags": tag_filter,
+        "top_k": top_k,
+        "space_id": sid,
+        "persistent_memory": persistent_memory_requested,
+        "reference_image": bool(reference_file is not None),
+        "user": {"id": uid, "email": user.get("email"), "role": user.get("role")},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _log_search_activity(
+        user=user,
+        space_id=sid,
+        activity_type="image_search",
+        request_payload=request_payload,
+        response_payload=response,
+        summary=summary,
+        session_name=session_name,
+        request=request,
+    )
     return response
 
 
@@ -1071,7 +1270,7 @@ async def api_me(request: Request):
 
 
 @app.post("/api/register")
-async def api_register(payload: Dict[str, Any]):
+async def api_register(request: Request, payload: Dict[str, Any]):
     if not settings.allow_registration:
         return JSONResponse(status_code=403, content={"error": "registration disabled"})
     email = (payload.get("email") or "").strip().lower()
@@ -1080,8 +1279,27 @@ async def api_register(payload: Dict[str, Any]):
         return JSONResponse(status_code=400, content={"error": "email and password required"})
     try:
         u = create_user(email, password)
-        token = sign_session({"user_id": u["id"], "email": email, "role": u.get("role") or "user"})
+        session_id = generate_session_id()
+        token = sign_session({"user_id": u["id"], "email": email, "role": u.get("role") or "user", "sid": session_id})
         headers = set_session_cookie_headers(token)
+        default_space_id = get_default_space_id(u["id"])
+        if default_space_id is None:
+            raise ValueError("default_space_missing")
+        session_seq, current_name = _upsert_search_session(
+            session_id=session_id,
+            user_id=u["id"],
+            space_id=default_space_id,
+            name=None,
+            client_ip=_get_client_ip(request),
+            user_agent=_get_user_agent(request),
+        )
+        _ensure_session_name(
+            session_id=session_id,
+            user_id=u["id"],
+            space_id=default_space_id,
+            session_seq=session_seq,
+            current_name=current_name,
+        )
         spaces = list_spaces(u["id"]) or []
         return JSONResponse(
             status_code=200,
@@ -1097,7 +1315,7 @@ async def api_register(payload: Dict[str, Any]):
 
 
 @app.post("/api/login")
-async def api_login(payload: Dict[str, Any]):
+async def api_login(request: Request, payload: Dict[str, Any]):
     email = (payload.get("email") or "").strip().lower()
     password = payload.get("password") or ""
     if not email or not password:
@@ -1105,14 +1323,198 @@ async def api_login(payload: Dict[str, Any]):
     u = authenticate_user(email, password)
     if not u:
         return JSONResponse(status_code=401, content={"error": "invalid credentials"})
-    token = sign_session({"user_id": u["id"], "email": email, "role": u.get("role") or "user"})
+    session_id = generate_session_id()
+    token = sign_session({"user_id": u["id"], "email": email, "role": u.get("role") or "user", "sid": session_id})
     headers = set_session_cookie_headers(token)
+    default_space_id = get_default_space_id(u["id"])
+    if default_space_id is None:
+        raise ValueError("default_space_missing")
+    session_seq, current_name = _upsert_search_session(
+        session_id=session_id,
+        user_id=u["id"],
+        space_id=default_space_id,
+        name=None,
+        client_ip=_get_client_ip(request),
+        user_agent=_get_user_agent(request),
+    )
+    _ensure_session_name(
+        session_id=session_id,
+        user_id=u["id"],
+        space_id=default_space_id,
+        session_seq=session_seq,
+        current_name=current_name,
+    )
     spaces = list_spaces(u["id"]) or []
     return JSONResponse(
         status_code=200,
         content={"user": {"id": u["id"], "email": email, "role": u.get("role") or "user"}, "spaces": spaces},
         headers=headers,
     )
+
+
+@app.get("/api/search-history")
+async def api_search_history(
+    request: Request,
+    limit: int = 30,
+    offset: int = 0,
+    activity_type: Optional[str] = None,
+    space_id: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    filters: List[str] = ["s.user_id = %s"]
+    params: List[Any] = [uid]
+    if space_id is not None:
+        filters.append("s.space_id = %s")
+        params.append(int(space_id))
+    if activity_type:
+        filters.append("a.activity_type = %s")
+        params.append(activity_type)
+    if since:
+        filters.append("s.last_activity_at >= %s")
+        params.append(since)
+    if until:
+        filters.append("s.last_activity_at <= %s")
+        params.append(until)
+    where_clause = " AND ".join(filters)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT s.session_id,
+                       s.name,
+                       s.first_activity_at,
+                       s.last_activity_at,
+                       s.space_id,
+                       a.summary,
+                       a.activity_type,
+                       a.created_at
+                FROM search_sessions s
+                LEFT JOIN LATERAL (
+                    SELECT summary, activity_type, created_at
+                    FROM search_activity
+                    WHERE session_id = s.session_id
+                      AND user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) a ON TRUE
+                WHERE """
+                + where_clause
+                + """
+                ORDER BY s.last_activity_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (*params, uid, limit, offset),
+            )
+            rows = cur.fetchall()
+    sessions = []
+    for r in rows:
+        sessions.append(
+            {
+                "session_id": r[0],
+                "name": r[1] or "",
+                "first_activity_at": r[2].isoformat() if r[2] else None,
+                "last_activity_at": r[3].isoformat() if r[3] else None,
+                "space_id": r[4],
+                "last_summary": r[5] or "",
+                "last_activity_type": r[6] or "",
+                "last_activity_at": r[7].isoformat() if r[7] else (r[3].isoformat() if r[3] else None),
+            }
+        )
+    return {
+        "sessions": sessions,
+        "limit": limit,
+        "offset": offset,
+        "filters": {
+            "activity_type": activity_type or "",
+            "space_id": space_id,
+            "since": since,
+            "until": until,
+        },
+    }
+
+
+@app.get("/api/search-history/{session_id}")
+async def api_search_history_detail(
+    request: Request,
+    session_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    activity_type: Optional[str] = None,
+):
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    uid = int(user.get("user_id") or user.get("id"))
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_id, name, first_activity_at, last_activity_at, space_id, last_ip, last_user_agent
+                FROM search_sessions
+                WHERE session_id = %s AND user_id = %s
+                """,
+                (session_id, uid),
+            )
+            session_row = cur.fetchone()
+            if not session_row:
+                return JSONResponse(status_code=404, content={"error": "session_not_found"})
+            activity_filters = ["session_id = %s", "user_id = %s"]
+            params: List[Any] = [session_id, uid]
+            if activity_type:
+                activity_filters.append("activity_type = %s")
+                params.append(activity_type)
+            where_clause = " AND ".join(activity_filters)
+            cur.execute(
+                """
+                SELECT id, activity_type, summary, request_payload, response_payload, created_at, client_ip, user_agent
+                FROM search_activity
+                WHERE """
+                + where_clause
+                + """
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (*params, limit, offset),
+            )
+            activities = cur.fetchall()
+    items = []
+    for row in activities:
+        items.append(
+            {
+                "id": int(row[0]),
+                "activity_type": row[1] or "",
+                "summary": row[2] or "",
+                "request": row[3] or {},
+                "response": row[4] or {},
+                "created_at": row[5].isoformat() if row[5] else None,
+                "client_ip": row[6] or "",
+                "user_agent": row[7] or "",
+            }
+        )
+    return {
+        "session": {
+            "session_id": session_row[0],
+            "name": session_row[1] or "",
+            "first_activity_at": session_row[2].isoformat() if session_row[2] else None,
+            "last_activity_at": session_row[3].isoformat() if session_row[3] else None,
+            "space_id": session_row[4],
+            "last_ip": session_row[5] or "",
+            "last_user_agent": session_row[6] or "",
+        },
+        "activities": items,
+        "limit": limit,
+        "offset": offset,
+        "filters": {"activity_type": activity_type or ""},
+    }
 
 
 @app.post("/api/logout")
@@ -1590,7 +1992,7 @@ def _generate_sql(
     sql_context: str = "user",
     memory: Optional[List[Dict[str, str]]] = None,
     memory_context: Optional[str] = None,
-) -> str:
+) -> tuple[str, str]:
     include_system = role == "admin" and sql_context == "system"
     include_public = sql_context != "system"
     candidate_tables = _get_candidate_tables(
@@ -1690,7 +2092,7 @@ def _generate_sql(
             max_tokens=400,
         )
         content = resp.choices[0].message.content or ""
-        return _extract_sql_from_llm(content)
+        return _extract_sql_from_llm(content), content
     if settings.llm_provider == "oci":
         question_prompt = (
             "Generate a single PostgreSQL SELECT query for the user question. "
@@ -1709,7 +2111,7 @@ def _generate_sql(
             f"User question: {question}"
         )
         content = oci_chat_completion(question_prompt, context) or ""
-        return _extract_sql_from_llm(content)
+        return _extract_sql_from_llm(content), content
     raise ValueError("LLM provider not configured")
 
 
@@ -1807,7 +2209,7 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
         entries = _fetch_persistent_memory(space_id, "sql", question)
         persistent_memory_context = _build_persistent_memory_context(entries, int(settings.persistent_memory_max_chars))
     try:
-        sql = _generate_sql(
+        sql, llm_raw = _generate_sql(
             question,
             role=role,
             allowed_tables=None if allow_system else allowed_tables,
@@ -1877,6 +2279,7 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
         "executed": execute,
         "max_rows": max_rows,
         "memory_turns": memory_turns,
+        "llm_response": llm_raw or "",
     }
     if total_elapsed_ms is not None:
         response["elapsed_ms"] = total_elapsed_ms
@@ -1913,6 +2316,30 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
             metadata={"sql_context": sql_context, "executed": execute, "show_results": show_results},
         )
         response["memory_event_id"] = memory_event_id
+    summary = f"SQL · {question[:120]}" if question else "SQL search"
+    session_name = (question or "").strip()[:80] or None
+    request_payload = {
+        "question": question,
+        "execute": execute,
+        "show_results": show_results,
+        "space_id": space_id,
+        "sql_context": sql_context,
+        "max_rows": max_rows,
+        "memory_turns": memory_turns,
+        "persistent_memory": persistent_memory_requested,
+        "user": {"id": uid, "email": user.get("email"), "role": role},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _log_search_activity(
+        user=user,
+        space_id=space_id,
+        activity_type="sql_search",
+        request_payload=request_payload,
+        response_payload=response,
+        summary=summary,
+        session_name=session_name,
+        request=request,
+    )
     return response
 
 

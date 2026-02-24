@@ -112,15 +112,55 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding_ivfflat
   ON chunks USING ivfflat (embedding :PGVECTOR_OPCLASS)
   WITH (lists = :PGVECTOR_LISTS);
 
-CREATE TABLE IF NOT EXISTS user_activity (
-  id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS search_sessions (
+  id BIGSERIAL,
+  session_id TEXT NOT NULL,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  activity_type TEXT NOT NULL,
-  details JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+  space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+  name TEXT,
+  last_ip TEXT,
+  last_user_agent TEXT,
+  first_activity_at TIMESTAMPTZ DEFAULT now(),
+  last_activity_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (session_id)
+) PARTITION BY HASH (session_id);
 
-CREATE INDEX IF NOT EXISTS idx_user_activity_user_time ON user_activity(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS search_sessions_p0
+  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+CREATE TABLE IF NOT EXISTS search_sessions_p1
+  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+CREATE TABLE IF NOT EXISTS search_sessions_p2
+  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 2);
+CREATE TABLE IF NOT EXISTS search_sessions_p3
+  PARTITION OF search_sessions FOR VALUES WITH (MODULUS 4, REMAINDER 3);
+
+CREATE INDEX IF NOT EXISTS idx_search_sessions_user_time ON search_sessions(user_id, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_sessions_space_time ON search_sessions(space_id, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_sessions_id ON search_sessions(id);
+
+CREATE TABLE IF NOT EXISTS search_activity (
+  id BIGSERIAL,
+  session_id TEXT NOT NULL,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  space_id BIGINT REFERENCES spaces(id) ON DELETE SET NULL,
+  activity_type TEXT NOT NULL,
+  request_payload JSONB DEFAULT '{}'::jsonb,
+  response_payload JSONB DEFAULT '{}'::jsonb,
+  summary TEXT,
+  client_ip TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (id, created_at)
+) PARTITION BY RANGE (created_at);
+
+CREATE TABLE IF NOT EXISTS search_activity_default
+  PARTITION OF search_activity DEFAULT;
+
+CREATE INDEX IF NOT EXISTS idx_search_activity_session_time ON search_activity(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_activity_user_time ON search_activity(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_activity_space_time ON search_activity(space_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_activity_type_time ON search_activity(activity_type, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS image_assets (
   id BIGSERIAL PRIMARY KEY,

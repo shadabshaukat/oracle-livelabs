@@ -193,6 +193,8 @@ Environment variables (see .env.example):
 - GET /api/doc-thumbnail?doc_id=<id> (document thumbnail for Library)
 - GET /api/kb (library listing)
 - Auth: /api/register, /api/login, /api/logout, /api/me
+- GET /api/search-history (session history with filters + pagination)
+- GET /api/search-history/{session_id} (session activity details)
 - GET /api/llm-config (OCI LLM config snapshot – provider/region/endpoint; compartment/model presence)
 - POST /api/llm-test ({question, context}) – verifies LLM connectivity; returns ok + chat_ok/text_ok
 - GET/POST /api/llm-debug ({question, context}) – diagnostic shape/fields for OCI responses
@@ -202,6 +204,7 @@ UI
 - Space selector in the top bar filters uploads/searches/library per user space.
 - RAG answers include a “References” list (file name, type, and a chunk anchor). Full source paths are not exposed.
 - Image search renders cards using `thumbnail_url` and shows caption/tags/score.
+- Search History now includes filters (activity type, space, and time range), pagination controls, and audit metadata (session last IP/user-agent plus per-activity client IP/user-agent).
 
 Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 if you’ve just updated templates.
 
