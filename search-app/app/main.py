@@ -29,6 +29,7 @@ from .embeddings import get_model, embed_texts
 from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers, generate_session_id
 from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space, get_user_by_id
 from .vision_embeddings import embed_image_paths, embed_image_texts, VisionModelUnavailable
+from .oci_llm import oci_chat_completion
 from .deep_research import start_conversation as dr_start, ask as dr_ask
 from .deep_research_store import (
     list_conversations as dr_list_conversations,

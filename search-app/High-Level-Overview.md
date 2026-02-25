@@ -119,6 +119,32 @@ Data model and flow
   - rag: perform hybrid/selected search → assemble context → call LLM (OCI or OpenAI) → return synthesized answer with references to top chunks/files. References include file_name/type and optional Object Storage link.
     - Deep Research and SQL Search now share the persistent memory store for retrieval augmentation.
 
+Persistent memory + session activity flow
+
+```mermaid
+flowchart TD
+    A[/User request: /api/search | /api/sql-search | /api/image-search | /api/deep-research/ask/] --> B[Session auth + space context]
+    B --> C[Endpoint handler (main.py/deep_research.py)]
+    C --> D{Persistent memory enabled?}
+    D -- Yes --> E[_fetch_persistent_memory(user_id, space_id, memory_type)]
+    E --> F[(memory_events
+    rating=1 + pgvector)]
+    D -- No --> G[Skip memory context]
+    C --> H[Search pipeline
+    semantic | fulltext | hybrid | rag | sql | image]
+    H --> I[Results + optional LLM synthesis]
+    C --> J{Persist memory?}
+    J -- Yes --> K[_persist_memory_event → memory_events]
+    C --> L[_log_search_activity]
+    L --> M[(search_sessions)]
+    L --> N[(search_activity)]
+    I --> O[Response to UI]
+```
+
+Notes:
+- Memory retrieval and search queries are always scoped by user_id and optional space_id.
+- Only memory_events with rating=1 are retrieved for prompt context.
+
 - Readiness/health: endpoints check DB availability, existence of extensions, tables, and indexes.
 
 Configuration and deployment
