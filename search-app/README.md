@@ -49,6 +49,31 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 4) **Follow-ups**: suggested follow-ups return in assistant metadata; users respond via a modal which sends a combined prompt back through `/api/deep-research/ask`.
 5) **Persistent memory**: DR can opt into the same `memory_events` pipeline as text/sql when enabled.
 
+### Persistent Memory + Session Activity Flow
+```mermaid
+flowchart TD
+    A[/User request: /api/search | /api/sql-search | /api/image-search | /api/deep-research/ask/] --> B[Session auth + space context]
+    B --> C[Endpoint handler (main.py/deep_research.py)]
+    C --> D{Persistent memory enabled?}
+    D -- Yes --> E[_fetch_persistent_memory(user_id, space_id, memory_type)]
+    E --> F[(memory_events
+    rating=1 + pgvector)]
+    D -- No --> G[Skip memory context]
+    C --> H[Search pipeline
+    semantic | fulltext | hybrid | rag | sql | image]
+    H --> I[Results + optional LLM synthesis]
+    C --> J{Persist memory?}
+    J -- Yes --> K[_persist_memory_event → memory_events]
+    C --> L[_log_search_activity]
+    L --> M[(search_sessions)]
+    L --> N[(search_activity)]
+    I --> O[Response to UI]
+```
+
+**Notes:**
+- Memory retrieval and search queries are always scoped by `user_id` and optional `space_id`.
+- Only `memory_events` with `rating=1` are retrieved for prompt context.
+
 ## Text Ingestion Lifecycle (All File Types)
 
 1) **Upload**
