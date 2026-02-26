@@ -733,3 +733,94 @@ This session is now ready for targeted code and UI/UX change requests.
 - PDF OCR path is functioning and still integrated in extraction flow when `OCR_PDF=true`.
 - Recent warning-noise changes were limited to embedded-image OCR (DOCX/PPTX path) and did not disable/alter PDF OCR execution.
 
+---
+
+## 26) OCR runtime-path hardening for PDF/DOCX/PPTX (2026-02-26, completed)
+
+### Problem observed
+- User reported that scanned PDF OCR appeared missing (chunk count dropped, OCR text not present) while logs also showed embedded-image OCR disabling in some runs.
+- This pointed to environment/runtime OCR resolution issues (binary path visibility) rather than disabled OCR logic.
+
+### Diagnosis performed
+- Verified host-level Tesseract exists: `tesseract 5.5.1`.
+- Verified app runtime environment via `uv run`:
+  - `which_tesseract=/opt/homebrew/bin/tesseract`
+  - `pytesseract` import OK
+  - `_ocr_pdf_pages(...)` returned OCR text (`pdf_ocr_chars=30175` on dataset sample)
+- Conclusion: OCR pipeline works when runtime can resolve Tesseract consistently.
+
+### Hardening change implemented
+- File: `search-app/app/config.py`
+  - Added `OCR_TESSERACT_CMD` setting (`settings.ocr_tesseract_cmd`).
+- File: `search-app/app/vision_embeddings.py`
+  - In `ocr_image_text(...)`, Tesseract command resolution now follows:
+    1. `OCR_TESSERACT_CMD` (explicit override)
+    2. `shutil.which("tesseract")`
+    3. common absolute fallbacks:
+       - `/opt/homebrew/bin/tesseract`
+       - `/usr/local/bin/tesseract`
+       - `/usr/bin/tesseract`
+  - Sets `pytesseract.pytesseract.tesseract_cmd` when found.
+  - Improves error hinting to recommend `OCR_TESSERACT_CMD` when PATH-related failures occur.
+
+### Impact
+- Makes OCR behavior more deterministic across service launch contexts (shell/launchd/daemon differences in PATH).
+- Applies to all OCR call sites using `ocr_image_text(...)`:
+  - PDF OCR fallback
+  - DOCX/PPTX embedded-image OCR
+  - image OCR extraction path
+
+### Validation
+- Compile check passed:
+  - `uv run python -m py_compile app/config.py app/vision_embeddings.py app/text_utils.py` ✅
+
+### Cross-platform update
+- Added env documentation in both:
+  - `search-app/.env`
+  - `search-app/.env.example`
+- New variable:
+  - `OCR_TESSERACT_CMD=` (optional absolute override)
+- Guidance:
+  - Leave empty when PATH is correctly configured.
+  - Set explicitly in heterogeneous deployments (macOS/Linux/Oracle Linux/Ubuntu/systemd) to avoid PATH drift.
+- `vision_embeddings.py` fallback probe list now includes `/bin/tesseract` in addition to Homebrew and common Unix locations.
+
+---
+
+## 27) Full codebase health check sweep (2026-02-26, completed)
+
+### Scope requested
+- User requested a broad verification pass to confirm the codebase changes are stable and expected behavior is intact.
+
+### Checks executed
+1. **Whole backend syntax/compile validation**
+   - Command:
+     - `uv run python -m py_compile $(find app -name '*.py' -type f | tr '\n' ' ')`
+   - Result: ✅ success (no syntax/compile errors across `search-app/app`).
+
+2. **OCR runtime smoke checks**
+   - Verified effective runtime settings:
+     - `OCR_ENABLED=True`
+     - `OCR_PDF_ENABLED=True`
+     - `OCR_TESSERACT_CMD` currently empty (PATH-based resolution active)
+     - `which tesseract => /opt/homebrew/bin/tesseract`
+   - Verified real PDF OCR execution:
+     - `_ocr_pdf_pages(dataset/DataPrivacy-Law-India.pdf)`
+     - `PDF_OCR_CHARS=30175`, non-empty output ✅
+   - Embedded-image OCR guard status check:
+     - `_EMBEDDED_IMAGE_OCR_DISABLED=False` in current run ✅
+
+3. **Critical endpoint/flow contract presence checks** (`app/main.py`)
+   - `_log_search_activity` found ✅
+   - `/api/doc-download` route found ✅
+   - `/api/doc-thumbnail` route found ✅
+   - `_delete_document_by_id` centralized helper found ✅
+   - `/api/search-history` route found ✅
+   - `/api/search-history/{session_id}` route found ✅
+
+### Summary
+- Current codebase state is healthy for the areas changed in this session:
+  - OCR pipeline (including PDF OCR) is operational in runtime checks.
+  - Session/search history and document retrieval/delete route contracts are present.
+  - No compile-time regressions detected across backend Python modules.
+

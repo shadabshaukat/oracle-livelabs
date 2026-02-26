@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +38,21 @@ def ocr_image_text(path: str) -> str:
         raise OcrUnavailable(
             "pytesseract is not installed. Install with `pip install pytesseract` and ensure Tesseract is available."
         ) from exc
+    tesseract_cmd = settings.ocr_tesseract_cmd
+    if not tesseract_cmd:
+        tesseract_cmd = shutil.which("tesseract")
+    if not tesseract_cmd:
+        for candidate in (
+            "/opt/homebrew/bin/tesseract",
+            "/usr/local/bin/tesseract",
+            "/usr/bin/tesseract",
+            "/bin/tesseract",
+        ):
+            if os.path.exists(candidate):
+                tesseract_cmd = candidate
+                break
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
     try:
         image = Image.open(path).convert("RGB")
         data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
@@ -54,7 +71,10 @@ def ocr_image_text(path: str) -> str:
             return ""
         text = " ".join(words)
     except Exception as exc:
-        raise OcrUnavailable(str(exc)) from exc
+        hint = ""
+        if "not installed" in str(exc).lower() or "not in your path" in str(exc).lower():
+            hint = " Set OCR_TESSERACT_CMD to the absolute binary path (e.g. /opt/homebrew/bin/tesseract)."
+        raise OcrUnavailable(f"{exc}{hint}") from exc
     if not text:
         return ""
     cleaned = " ".join(text.split())
