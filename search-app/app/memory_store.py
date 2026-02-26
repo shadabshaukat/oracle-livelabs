@@ -167,6 +167,7 @@ def _persist_memory_event(
     columns: Optional[List[str]] = None,
     result_sample: Optional[List[Dict[str, Any]]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    rating: Optional[int] = None,
 ) -> Optional[int]:
     payload_text = "\n".join([query_text or "", generated_sql or "", response_text or ""]).strip()
     summary_text = ""
@@ -183,8 +184,8 @@ def _persist_memory_event(
             cur.execute(
                 """
                 INSERT INTO memory_events
-                (space_id, user_id, memory_type, query_text, response_text, generated_sql, columns, result_sample, metadata, summary, embedding, embedding_model)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::vector, %s)
+                (space_id, user_id, memory_type, query_text, response_text, generated_sql, columns, result_sample, metadata, summary, embedding, embedding_model, rating)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::vector, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -194,12 +195,13 @@ def _persist_memory_event(
                     query_text or None,
                     response_text or None,
                     generated_sql or None,
-                    json.dumps(columns or []),
-                    json.dumps(result_sample or []),
-                    json.dumps(metadata or {}),
+                    json.dumps(columns or [], default=str),
+                    json.dumps(result_sample or [], default=str),
+                    json.dumps(metadata or {}, default=str),
                     summary_text or None,
                     to_vec_literal(embedding) if embedding is not None else None,
                     settings.embedding_model_name,
+                    rating,
                 ),
             )
             row = cur.fetchone()

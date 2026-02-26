@@ -261,6 +261,26 @@ For new environments, use `schema_v3.sql` to create tables and seed roles in one
 - We reuse the existing LLM provider settings (OCI/OpenAI) for NL2SQL.
 - SQL execution is **SELECT-only** with row limits for safety.
 
+## Implemented: Column-level grounding + FK join-path hints
+
+To improve NL2SQL accuracy in both user-schema and system-catalog contexts, the SQL generation pipeline now adds two metadata-rich prompt blocks before SQL generation:
+
+1. **Column-level grounding**
+   - For each candidate table, the prompt includes column names and data types.
+   - It also marks structural signals per column where available:
+     - `PK` (primary key)
+     - `FK` (foreign key)
+     - `IDX` (indexed column)
+   - This reduces hallucinated columns and improves column choice for filters, grouping, and aggregations.
+
+2. **FK join-path hints**
+   - The pipeline extracts foreign-key relationships from PostgreSQL catalog metadata and injects explicit join hints (e.g., `public.orders.customer_id -> public.customers.id`).
+   - This improves join correctness and reduces invalid/cross-product joins.
+
+These enhancements are generated dynamically from live schema metadata and scoped to the allowed table set for the current role/context.
+
+### Recommended NL2SQL accuracy strategy (best next steps)
+
 ## NL2SQL Improvement Ideas (Future Enhancements)
 These align with common patterns in LangChain/LangGraph and MCP-based SQL agents:
 

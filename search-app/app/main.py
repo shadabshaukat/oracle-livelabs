@@ -21,7 +21,7 @@ import uvicorn
 
 from .auth import SessionOrBasicAuthMiddleware
 from .config import settings
-from .db import init_db, get_conn
+from .db import init_db_with_retry, get_conn
 from .store import ensure_dirs, ingest_file_path, save_upload
 from .object_storage import default_object_bucket, get_object_store, resolve_object_provider
 from .search import semantic_search, fulltext_search, hybrid_search, rag, image_search
@@ -77,7 +77,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 @app.on_event("startup")
 def on_startup():
     ensure_dirs()
-    init_db()
+    init_db_with_retry()
     _migrate_object_metadata()
     # Preload embeddings model to avoid first-search latency
     try:
@@ -101,6 +101,7 @@ async def index(request: Request):
             "sql_max_rows": settings.sql_max_rows,
             "sql_default_rows": settings.sql_default_rows,
             "sql_memory_turns": settings.sql_memory_turns,
+            "sql_agentic_mode_default": settings.sql_agentic_mode_default,
             "sql_persistent_memory_enabled": settings.sql_persistent_memory_enabled,
             "text_persistent_memory_enabled": settings.text_persistent_memory_enabled,
             "image_persistent_memory_enabled": settings.image_persistent_memory_enabled,
@@ -1885,6 +1886,334 @@ def _get_candidate_tables(
     return tables
 
 
+def _question_tokens(text: str) -> set[str]:
+    raw_tokens = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]+", (text or "").lower())
+    tokens: set[str] = set()
+    for tok in raw_tokens:
+        if len(tok) < 3:
+            continue
+        tokens.add(tok)
+        # very lightweight singularization for plural table names
+        if tok.endswith("s") and len(tok) > 4:
+            tokens.add(tok[:-1])
+    return tokens
+
+
+def _split_identifier_tokens(name: str) -> set[str]:
+    parts = re.split(r"[_\W]+", (name or "").lower())
+    out: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        out.add(part)
+        if part.endswith("s") and len(part) > 4:
+            out.add(part[:-1])
+    return out
+
+
+def _rank_candidate_tables_for_question(
+    question: str,
+    candidate_tables: List[str],
+    *,
+    max_tables: int = 24,
+) -> List[str]:
+    """Rank candidate tables lexically for better first-turn NL2SQL grounding."""
+    if not candidate_tables:
+        return []
+    max_tables = max(1, min(int(max_tables), 40))
+    q = (question or "").lower()
+    q_tokens = _question_tokens(question)
+    if not q_tokens:
+        return candidate_tables[:max_tables]
+
+    table_set = set(candidate_tables)
+    score_map: Dict[str, float] = {t: 0.0 for t in candidate_tables}
+
+    # Name-based scoring
+    for table_id in candidate_tables:
+        parsed = _parse_table_id(table_id)
+        if not parsed:
+            continue
+        _schema, table_name = parsed
+        table_name_l = table_name.lower()
+        table_name_tokens = _split_identifier_tokens(table_name_l)
+        if table_name_l in q:
+            score_map[table_id] += 8.0
+        overlap = q_tokens.intersection(table_name_tokens)
+        if overlap:
+            score_map[table_id] += 2.5 * len(overlap)
+
+    # Column-based scoring (single catalog pass across candidate schemas)
+    candidate_schemas = sorted({t.split(".", 1)[0] if "." in t else "public" for t in candidate_tables})
+    if candidate_schemas:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT n.nspname AS table_schema,
+                           c.relname AS table_name,
+                           a.attname AS column_name
+                    FROM pg_catalog.pg_attribute a
+                    JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+                    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = ANY(%s)
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                      AND c.relkind IN ('r', 'v', 'm', 'f', 'p')
+                    """,
+                    (candidate_schemas,),
+                )
+                for table_schema, table_name, column_name in cur.fetchall() or []:
+                    table_id = f"{table_schema}.{table_name}"
+                    if table_id not in table_set:
+                        continue
+                    col_tokens = _split_identifier_tokens(column_name)
+                    overlap = q_tokens.intersection(col_tokens)
+                    if overlap:
+                        score_map[table_id] += 1.0 * len(overlap)
+
+    ranked = sorted(candidate_tables, key=lambda t: (score_map.get(t, 0.0), t), reverse=True)
+    positives = [t for t in ranked if score_map.get(t, 0.0) > 0]
+    if positives:
+        return positives[:max_tables]
+    return ranked[:max_tables]
+
+
+def _is_safe_sql_identifier(name: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name or ""))
+
+
+def _parse_table_id(table_id: str) -> Optional[tuple[str, str]]:
+    raw = (table_id or "").strip().strip('"')
+    if not raw:
+        return None
+    if "." in raw:
+        schema_name, table_name = raw.split(".", 1)
+    else:
+        schema_name, table_name = "public", raw
+    schema_name = schema_name.strip().strip('"')
+    table_name = table_name.strip().strip('"')
+    if not (_is_safe_sql_identifier(schema_name) and _is_safe_sql_identifier(table_name)):
+        return None
+    return schema_name, table_name
+
+
+def _truncate_sample_value(value: Any, max_len: int = 120) -> Any:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= max_len:
+        return value
+    return text[:max_len] + "…"
+
+
+def _get_user_schema_row_samples(
+    table_ids: List[str],
+    sample_rows: int = 5,
+    max_tables: int = 5,
+) -> str:
+    """Return random sample rows for public/user-schema tables only."""
+    if not table_ids:
+        return ""
+    sections: List[str] = []
+    seen: set[str] = set()
+    sample_rows = max(1, min(int(sample_rows), 5))
+    max_tables = max(1, min(int(max_tables), 8))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for table_id in table_ids:
+                parsed = _parse_table_id(table_id)
+                if not parsed:
+                    continue
+                schema_name, table_name = parsed
+                if schema_name != "public":
+                    # Only sample user/public schema tables.
+                    continue
+                normalized_table = f"{schema_name}.{table_name}"
+                if normalized_table in seen:
+                    continue
+                seen.add(normalized_table)
+                if len(sections) >= max_tables:
+                    break
+                try:
+                    cur.execute(
+                        f'SELECT * FROM "{schema_name}"."{table_name}" ORDER BY random() LIMIT %s',
+                        (sample_rows,),
+                    )
+                    rows = cur.fetchall() or []
+                    columns = [desc[0] for desc in (cur.description or [])]
+                    if not rows or not columns:
+                        continue
+                    preview_rows: List[Dict[str, Any]] = []
+                    for row in rows:
+                        row_dict = {
+                            col: _truncate_sample_value(row[idx])
+                            for idx, col in enumerate(columns)
+                        }
+                        preview_rows.append(row_dict)
+                    section = (
+                        f"Table: {normalized_table}\n"
+                        f"Sample rows (random, up to {sample_rows}):\n"
+                        f"{json.dumps(preview_rows, default=str)}"
+                    )
+                    sections.append(section)
+                except Exception:
+                    # Skip tables that fail sampling (permissions, unsupported types, etc.)
+                    continue
+    return "\n\n".join(sections).strip()
+
+
+def _get_table_column_grounding(
+    table_ids: List[str],
+    *,
+    max_tables: int = 12,
+    max_columns_per_table: int = 40,
+) -> str:
+    """Build compact column-level grounding for NL2SQL prompts."""
+    if not table_ids:
+        return ""
+    parsed_tables: List[tuple[str, str]] = []
+    seen: set[str] = set()
+    for table_id in table_ids:
+        parsed = _parse_table_id(table_id)
+        if not parsed:
+            continue
+        schema_name, table_name = parsed
+        normalized = f"{schema_name}.{table_name}"
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        parsed_tables.append((schema_name, table_name))
+        if len(parsed_tables) >= max_tables:
+            break
+    if not parsed_tables:
+        return ""
+
+    profiles: List[str] = []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for schema_name, table_name in parsed_tables:
+                try:
+                    cur.execute(
+                        """
+                        SELECT a.attname,
+                               pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+                               EXISTS (
+                                   SELECT 1
+                                   FROM pg_catalog.pg_constraint c
+                                   WHERE c.conrelid = cls.oid
+                                     AND c.contype = 'p'
+                                     AND a.attnum = ANY(c.conkey)
+                               ) AS is_pk,
+                               EXISTS (
+                                   SELECT 1
+                                   FROM pg_catalog.pg_constraint c
+                                   WHERE c.conrelid = cls.oid
+                                     AND c.contype = 'f'
+                                     AND a.attnum = ANY(c.conkey)
+                               ) AS is_fk,
+                               EXISTS (
+                                   SELECT 1
+                                   FROM pg_catalog.pg_index i
+                                   WHERE i.indrelid = cls.oid
+                                     AND a.attnum = ANY(i.indkey)
+                               ) AS is_indexed
+                        FROM pg_catalog.pg_attribute a
+                        JOIN pg_catalog.pg_class cls ON cls.oid = a.attrelid
+                        JOIN pg_catalog.pg_namespace ns ON ns.oid = cls.relnamespace
+                        WHERE ns.nspname = %s
+                          AND cls.relname = %s
+                          AND a.attnum > 0
+                          AND NOT a.attisdropped
+                        ORDER BY a.attnum
+                        LIMIT %s
+                        """,
+                        (schema_name, table_name, max_columns_per_table),
+                    )
+                    rows = cur.fetchall() or []
+                    if not rows:
+                        continue
+                    column_notes: List[str] = []
+                    for col_name, data_type, is_pk, is_fk, is_indexed in rows:
+                        tags: List[str] = []
+                        if is_pk:
+                            tags.append("PK")
+                        if is_fk:
+                            tags.append("FK")
+                        if is_indexed:
+                            tags.append("IDX")
+                        tag_txt = f" [{'|'.join(tags)}]" if tags else ""
+                        column_notes.append(f"- {col_name} ({data_type}){tag_txt}")
+                    profiles.append(f"Table: {schema_name}.{table_name}\n" + "\n".join(column_notes))
+                except Exception:
+                    continue
+    return "\n\n".join(profiles).strip()
+
+
+def _get_fk_join_hints(table_ids: List[str], *, max_hints: int = 20) -> str:
+    """Return join hints from FK metadata for the provided table set."""
+    if not table_ids:
+        return ""
+    parsed: List[tuple[str, str]] = []
+    selected_ids: set[str] = set()
+    for table_id in table_ids:
+        item = _parse_table_id(table_id)
+        if not item:
+            continue
+        schema_name, table_name = item
+        normalized = f"{schema_name}.{table_name}"
+        selected_ids.add(normalized)
+        parsed.append((schema_name, table_name))
+    if not parsed:
+        return ""
+    schemas = sorted({s for s, _ in parsed})
+    hints: List[str] = []
+    seen: set[str] = set()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    SELECT src_ns.nspname AS src_schema,
+                           src.relname AS src_table,
+                           src_att.attname AS src_col,
+                           tgt_ns.nspname AS tgt_schema,
+                           tgt.relname AS tgt_table,
+                           tgt_att.attname AS tgt_col
+                    FROM pg_catalog.pg_constraint c
+                    JOIN pg_catalog.pg_class src ON src.oid = c.conrelid
+                    JOIN pg_catalog.pg_namespace src_ns ON src_ns.oid = src.relnamespace
+                    JOIN pg_catalog.pg_class tgt ON tgt.oid = c.confrelid
+                    JOIN pg_catalog.pg_namespace tgt_ns ON tgt_ns.oid = tgt.relnamespace
+                    JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS src_key(attnum, ord) ON TRUE
+                    JOIN LATERAL unnest(c.confkey) WITH ORDINALITY AS tgt_key(attnum, ord) ON tgt_key.ord = src_key.ord
+                    JOIN pg_catalog.pg_attribute src_att ON src_att.attrelid = src.oid AND src_att.attnum = src_key.attnum
+                    JOIN pg_catalog.pg_attribute tgt_att ON tgt_att.attrelid = tgt.oid AND tgt_att.attnum = tgt_key.attnum
+                    WHERE c.contype = 'f'
+                      AND src_ns.nspname = ANY(%s)
+                      AND tgt_ns.nspname = ANY(%s)
+                    ORDER BY src_ns.nspname, src.relname, tgt_ns.nspname, tgt.relname
+                    """,
+                    (schemas, schemas),
+                )
+                rows = cur.fetchall() or []
+            except Exception:
+                rows = []
+    for src_schema, src_table, src_col, tgt_schema, tgt_table, tgt_col in rows:
+        src_id = f"{src_schema}.{src_table}"
+        tgt_id = f"{tgt_schema}.{tgt_table}"
+        if src_id not in selected_ids or tgt_id not in selected_ids:
+            continue
+        hint = f"{src_id}.{src_col} -> {tgt_id}.{tgt_col}"
+        if hint in seen:
+            continue
+        seen.add(hint)
+        hints.append(hint)
+        if len(hints) >= max_hints:
+            break
+    return "\n".join(f"- {h}" for h in hints)
+
+
 def _select_relevant_tables(
     question: str,
     candidate_tables: List[str],
@@ -1998,13 +2327,23 @@ def _generate_sql(
     sql_context: str = "user",
     memory: Optional[List[Dict[str, str]]] = None,
     memory_context: Optional[str] = None,
+    include_row_samples: bool = False,
+    sample_table_hints: Optional[List[str]] = None,
+    agentic_feedback: Optional[str] = None,
+    sample_rows: Optional[int] = None,
+    sample_max_tables: Optional[int] = None,
 ) -> tuple[str, str]:
     include_system = role == "admin" and sql_context == "system"
     include_public = sql_context != "system"
-    candidate_tables = _get_candidate_tables(
+    all_candidate_tables = _get_candidate_tables(
         include_public=include_public,
         include_system=include_system,
         allowed_tables=allowed_tables,
+    )
+    candidate_tables = _rank_candidate_tables_for_question(
+        question,
+        all_candidate_tables,
+        max_tables=24,
     )
     selected_tables = _select_relevant_tables(
         question=question,
@@ -2013,7 +2352,8 @@ def _generate_sql(
         sql_context=sql_context,
         system_prompt_override=system_prompt_override,
     )
-    prompt_tables = selected_tables or allowed_tables
+    prompt_tables = selected_tables or set(candidate_tables)
+    grounding_tables = sorted(prompt_tables) if prompt_tables else sorted(candidate_tables)
     schema = _get_schema_overview(
         allowed_tables=prompt_tables,
         include_system=include_system,
@@ -2069,9 +2409,39 @@ def _generate_sql(
             if item.get("sql"):
                 memory_lines.append(f"SQL: {item['sql']}")
         memory_note = "\n".join(memory_lines).strip()
+    conversation_memory_note = ""
+    if memory_note:
+        conversation_memory_note = "Conversation memory:\n" + memory_note + "\n\n"
     persistent_note = ""
     if memory_context:
         persistent_note = f"Persistent memory:\n{memory_context}\n\n"
+    agentic_feedback_note = ""
+    if agentic_feedback:
+        agentic_feedback_note = f"Execution feedback from prior attempts:\n{agentic_feedback}\n\n"
+    column_grounding = _get_table_column_grounding(grounding_tables)
+    column_grounding_note = (
+        f"Column-level grounding (types/keys/indexes):\n{column_grounding}\n\n"
+        if column_grounding
+        else ""
+    )
+    fk_hints = _get_fk_join_hints(grounding_tables)
+    fk_hints_note = f"FK join-path hints:\n{fk_hints}\n\n" if fk_hints else ""
+    row_samples_note = ""
+    if include_row_samples and include_public and not include_system:
+        sample_rows_eff = max(1, min(int(sample_rows or settings.sql_agentic_sample_rows), 5))
+        sample_max_tables_eff = max(1, min(int(sample_max_tables or settings.sql_agentic_sample_max_tables), 5))
+        hinted_tables = [t for t in (sample_table_hints or []) if t]
+        sample_source_tables = hinted_tables or (sorted(selected_tables) if selected_tables else sorted(candidate_tables))
+        row_samples = _get_user_schema_row_samples(
+            sample_source_tables,
+            sample_rows=sample_rows_eff,
+            max_tables=sample_max_tables_eff,
+        )
+        if row_samples:
+            row_samples_note = (
+                "User schema sample rows (random preview, non-exhaustive):\n"
+                f"{row_samples}\n\n"
+            )
     prompt = (
         f"{system_prompt}\n\n"
         "Given the schema below and the user question, generate a single SELECT query only. "
@@ -2081,7 +2451,11 @@ def _generate_sql(
         f"{monitoring_guidance}\n"
         f"{guardrails}\n"
         f"{persistent_note}"
-        f"{('Conversation memory:\n' + memory_note + '\n\n') if memory_note else ''}"
+        f"{agentic_feedback_note}"
+        f"{column_grounding_note}"
+        f"{fk_hints_note}"
+        f"{row_samples_note}"
+        f"{conversation_memory_note}"
         f"Schema:\n{schema}\n\n"
         f"DDL:\n{ddl}\n\n"
         f"Question: {question}\n\n"
@@ -2111,7 +2485,11 @@ def _generate_sql(
             f"{monitoring_guidance}\n"
             f"{guardrails}\n"
             f"{persistent_note}"
-            f"{('Conversation memory:\n' + memory_note + '\n\n') if memory_note else ''}"
+            f"{agentic_feedback_note}"
+            f"{column_grounding_note}"
+            f"{fk_hints_note}"
+            f"{row_samples_note}"
+            f"{conversation_memory_note}"
             f"Schema:\n{schema}\n\n"
             f"DDL:\n{ddl}\n\n"
             f"User question: {question}"
@@ -2165,6 +2543,92 @@ def _validate_sql_tables(sql: str, allowed_tables: Optional[set[str]], allow_sys
     return True, None
 
 
+def _execute_sql_statements(
+    statements: List[str],
+    *,
+    role: str,
+    allowed_tables: Optional[set[str]],
+    allow_system: bool,
+    execute: bool,
+    show_results: bool,
+    max_rows: int,
+) -> tuple[List[Dict[str, Any]], Optional[int], bool, bool]:
+    queries: List[Dict[str, Any]] = []
+    total_elapsed_ms: Optional[int] = None
+    has_error = False
+    has_rows = False
+
+    for stmt in statements:
+        if not _is_safe_select(stmt):
+            logger.warning("SQL search unsafe SQL: role=%s sql=%s", role, stmt)
+            queries.append({"sql": stmt, "executed": False, "error": "unsafe_sql_generated"})
+            has_error = True
+            continue
+
+        ok, bad_table = _validate_sql_tables(stmt, allowed_tables, allow_system=allow_system)
+        if not ok:
+            logger.warning("SQL search disallowed table: role=%s table=%s sql=%s", role, bad_table, stmt)
+            queries.append({"sql": stmt, "executed": False, "error": "sql_table_not_allowed", "detail": bad_table})
+            has_error = True
+            continue
+
+        if not execute:
+            queries.append({"sql": stmt, "executed": False, "rows": [], "columns": [], "max_rows": max_rows})
+            continue
+
+        limited_sql = _apply_row_limit(stmt, max_rows)
+        try:
+            start = perf_counter()
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(limited_sql)
+                    rows = cur.fetchall() if show_results else []
+                    columns = [desc[0] for desc in cur.description] if cur.description else []
+            elapsed_ms = int(round((perf_counter() - start) * 1000))
+            if total_elapsed_ms is None:
+                total_elapsed_ms = 0
+            total_elapsed_ms += elapsed_ms
+            if rows:
+                has_rows = True
+            queries.append(
+                {
+                    "sql": stmt,
+                    "executed": True,
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows) if isinstance(rows, list) else 0,
+                    "elapsed_ms": elapsed_ms,
+                    "max_rows": max_rows,
+                }
+            )
+        except Exception as exc:
+            queries.append(
+                {
+                    "sql": stmt,
+                    "executed": False,
+                    "error": "sql_execution_failed",
+                    "detail": str(exc),
+                    "max_rows": max_rows,
+                }
+            )
+            has_error = True
+
+    return queries, total_elapsed_ms, has_error, has_rows
+
+
+def _build_sql_agentic_feedback(queries: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    for idx, q in enumerate(queries[:5], start=1):
+        sql_txt = (q.get("sql") or "").strip()
+        if sql_txt:
+            lines.append(f"Attempt {idx} SQL: {sql_txt}")
+        if q.get("error"):
+            lines.append(f"Attempt {idx} error: {q.get('error')} | detail: {q.get('detail') or ''}")
+        elif q.get("executed"):
+            lines.append(f"Attempt {idx} returned rows: {int(q.get('row_count') or 0)}")
+    return "\n".join(lines).strip()
+
+
 @app.post("/api/sql-search")
 async def api_sql_search(request: Request, payload: Dict[str, Any]):
     user = await get_current_user(request)
@@ -2179,6 +2643,12 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
         return JSONResponse(status_code=400, content={"error": "question required"})
     execute = bool(payload.get("execute"))
     show_results = bool(payload.get("show_results", True))
+    agentic_mode = (
+        _extract_bool(payload.get("agentic_mode"))
+        if payload.get("agentic_mode") is not None
+        else bool(settings.sql_agentic_mode_default)
+    )
+    agentic_max_retries = max(0, min(int(settings.sql_agentic_max_retries), 2))
     requested_rows = payload.get("max_rows")
     try:
         max_rows = int(requested_rows) if requested_rows is not None else int(settings.sql_default_rows)
@@ -2223,6 +2693,7 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
             sql_context=sql_context,
             memory=memory_entries,
             memory_context=persistent_memory_context,
+            include_row_samples=False,
         )
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": "sql_generation_failed", "detail": str(exc)})
@@ -2232,53 +2703,72 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
     if not statements:
         return JSONResponse(status_code=400, content={"error": "sql_generation_failed", "detail": "empty SQL generated"})
 
-    queries: List[Dict[str, Any]] = []
-    total_elapsed_ms: Optional[int] = None
+    queries, total_elapsed_ms, has_error, has_rows = _execute_sql_statements(
+        statements,
+        role=role,
+        allowed_tables=allowed_tables,
+        allow_system=allow_system,
+        execute=execute,
+        show_results=show_results,
+        max_rows=max_rows,
+    )
 
-    for stmt in statements:
-        if not _is_safe_select(stmt):
-            logger.warning("SQL search unsafe SQL: role=%s sql=%s", role, stmt)
-            queries.append({"sql": stmt, "executed": False, "error": "unsafe_sql_generated"})
-            continue
+    should_retry_with_sampling = bool(
+        agentic_mode
+        and sql_context == "user"
+        and execute
+        and (has_error or not has_rows)
+    )
 
-        ok, bad_table = _validate_sql_tables(stmt, allowed_tables, allow_system=allow_system)
-        if not ok:
-            logger.warning("SQL search disallowed table: role=%s table=%s sql=%s", role, bad_table, stmt)
-            queries.append({"sql": stmt, "executed": False, "error": "sql_table_not_allowed", "detail": bad_table})
-            continue
-
-        if not execute:
-            queries.append({"sql": stmt, "executed": False, "rows": [], "columns": [], "max_rows": max_rows})
-            continue
-
-        limited_sql = _apply_row_limit(stmt, max_rows)
-        try:
-            start = perf_counter()
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(limited_sql)
-                    rows = cur.fetchall() if show_results else []
-                    columns = [desc[0] for desc in cur.description] if cur.description else []
-            elapsed_ms = int(round((perf_counter() - start) * 1000))
-            if total_elapsed_ms is None:
-                total_elapsed_ms = 0
-            total_elapsed_ms += elapsed_ms
-            queries.append({
-                "sql": stmt,
-                "executed": True,
-                "columns": columns,
-                "rows": rows,
-                "elapsed_ms": elapsed_ms,
-                "max_rows": max_rows,
-            })
-        except Exception as exc:
-            queries.append({
-                "sql": stmt,
-                "executed": False,
-                "error": "sql_execution_failed",
-                "detail": str(exc),
-                "max_rows": max_rows,
-            })
+    if should_retry_with_sampling and agentic_max_retries > 0:
+        current_has_error = has_error
+        current_has_rows = has_rows
+        for _ in range(agentic_max_retries):
+            table_hints = [f"public.{name}" for name in sorted(_extract_table_names(sql))]
+            if allowed_tables:
+                allowed_full = {f"public.{name}" for name in allowed_tables}
+                table_hints = [t for t in table_hints if t in allowed_full]
+            try:
+                feedback = _build_sql_agentic_feedback(queries)
+                retry_sql, retry_llm_raw = _generate_sql(
+                    question,
+                    role=role,
+                    allowed_tables=None if allow_system else allowed_tables,
+                    system_prompt_override=system_prompt_override,
+                    sql_context=sql_context,
+                    memory=memory_entries,
+                    memory_context=persistent_memory_context,
+                    include_row_samples=True,
+                    sample_table_hints=table_hints,
+                    agentic_feedback=feedback,
+                )
+                retry_sql = retry_sql.strip().rstrip(";")
+                retry_statements = _split_sql_statements(retry_sql)
+                if not retry_statements:
+                    break
+                retry_queries, retry_elapsed_ms, retry_has_error, retry_has_rows = _execute_sql_statements(
+                    retry_statements,
+                    role=role,
+                    allowed_tables=allowed_tables,
+                    allow_system=allow_system,
+                    execute=execute,
+                    show_results=show_results,
+                    max_rows=max_rows,
+                )
+                if (not retry_has_error and retry_has_rows) or (current_has_error and not retry_has_error):
+                    sql = retry_sql
+                    llm_raw = retry_llm_raw
+                    queries = retry_queries
+                    total_elapsed_ms = retry_elapsed_ms
+                    current_has_error = retry_has_error
+                    current_has_rows = retry_has_rows
+                    if not current_has_error and current_has_rows:
+                        break
+                else:
+                    break
+            except Exception:
+                logger.exception("SQL search retry with row sampling failed")
+                break
 
     response = {
         "queries": queries,
@@ -2299,11 +2789,13 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
     if persistent_memory_enabled:
         sample_columns: List[str] | None = None
         sample_rows: List[Dict[str, Any]] | None = None
+        has_successful_rows = False
         for entry in queries:
             if entry.get("executed") and entry.get("columns"):
                 sample_columns = entry.get("columns") or []
                 rows = entry.get("rows") or []
                 if rows and sample_columns:
+                    has_successful_rows = True
                     sample_rows = [
                         {col: row[idx] for idx, col in enumerate(sample_columns)}
                         for row in rows[:3]
@@ -2320,6 +2812,7 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
             columns=sample_columns,
             result_sample=sample_rows,
             metadata={"sql_context": sql_context, "executed": execute, "show_results": show_results},
+            rating=1 if has_successful_rows else None,
         )
         response["memory_event_id"] = memory_event_id
     summary = f"SQL · {question[:120]}" if question else "SQL search"
@@ -2332,6 +2825,7 @@ async def api_sql_search(request: Request, payload: Dict[str, Any]):
         "sql_context": sql_context,
         "max_rows": max_rows,
         "memory_turns": memory_turns,
+        "agentic_mode": agentic_mode,
         "persistent_memory": persistent_memory_requested,
         "user": {"id": uid, "email": user.get("email"), "role": role},
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -18,8 +18,8 @@ This repository contains two related stacks that together deliver an enterprise 
 
 
 ## Documentation Index
-- Terraform stack: [oci_postgres_tf_stack/README.md](oci_postgres_tf_stack/README.md)
-- Application: [search-app/README.md](search-app/README.md)
+- Terraform stack: [docs/oci_postgres_tf_stack/README.md](docs/oci_postgres_tf_stack/README.md)
+- Application: [docs/search-app/README.md](docs/search-app/README.md)
 - Deployment: [DEPLOYMENT.md](DEPLOYMENT.md)
 - Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 
@@ -80,7 +80,7 @@ terraform apply plan.out
 - `uploads_bucket_name` (Object Storage bucket for app uploads)
 - `psql_admin_pwd` (sensitive)
 
-For production, set additional variables as needed (see [oci_postgres_tf_stack/README.md](oci_postgres_tf_stack/README.md)).
+For production, set additional variables as needed (see [docs/oci_postgres_tf_stack/README.md](docs/oci_postgres_tf_stack/README.md)).
 
 ### Option B: Oracle Resource Manager (ORM)
 1) Zip the Terraform stack directory or import it directly into ORM:
@@ -109,7 +109,7 @@ cp .env.example .env
 # Optionally set STORAGE_BACKEND and OCI_OS_BUCKET_NAME (see below)
 ```
 
-Key environment variables (see `search-app/.env.example` and `search-app/README.md` for a full list):
+Key environment variables (see `search-app/.env.example` and `docs/search-app/README.md` for a full list):
 - DB: `DATABASE_URL` or `DB_HOST/DB_NAME/DB_USER/DB_PASSWORD`, `DB_SSLMODE`
 - Security: `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`
 - Embeddings: `EMBEDDING_MODEL`, `EMBEDDING_DIM`
@@ -137,7 +137,7 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 
 ### Common Deployment Patterns
 - **Local dev**: run `uv sync` and `uv run searchapp`.
-- **VM (OCI Compute)**: copy repo + `.env`, run `./run.sh`, optionally set up systemd (see search-app/README.md).
+- **VM (OCI Compute)**: copy repo + `.env`, run `./run.sh`, optionally set up systemd (see docs/search-app/README.md).
 - **Private DB access**: ensure the VM is in the same VCN/subnet or a peered network; allow 5432 only from trusted sources.
 
 ### Upload Behavior
