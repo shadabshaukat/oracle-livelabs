@@ -25,6 +25,20 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 
+# Embedded-image OCR fallback guard to avoid repeated per-image warnings when OCR backend
+# is not available (e.g., tesseract missing on host).
+_EMBEDDED_IMAGE_OCR_DISABLED = False
+_EMBEDDED_IMAGE_OCR_WARNED = False
+
+
+def _disable_embedded_image_ocr_once(reason: str) -> None:
+    global _EMBEDDED_IMAGE_OCR_DISABLED, _EMBEDDED_IMAGE_OCR_WARNED
+    _EMBEDDED_IMAGE_OCR_DISABLED = True
+    if not _EMBEDDED_IMAGE_OCR_WARNED:
+        logger.warning("Embedded-image OCR disabled for this process: %s", reason)
+        _EMBEDDED_IMAGE_OCR_WARNED = True
+
+
 # Prefer keeping paragraph boundaries; avoid collapsing all newlines into spaces
 PARA_SPLIT_RE = re.compile(r"(?:\r?\n){2,}")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -333,12 +347,14 @@ def _ocr_pdf_pages(path: str) -> str:
 
 
 def _ocr_text_from_image_bytes(image_bytes: bytes, *, suffix: str = ".png") -> str:
+    if _EMBEDDED_IMAGE_OCR_DISABLED:
+        return ""
     if not image_bytes or not settings.ocr_enabled:
         return ""
     try:
         from .vision_embeddings import ocr_image_text, OcrUnavailable
     except Exception as exc:
-        logger.warning("OCR pipeline unavailable: %s", exc)
+        _disable_embedded_image_ocr_once(str(exc))
         return ""
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(image_bytes)
@@ -346,7 +362,16 @@ def _ocr_text_from_image_bytes(image_bytes: bytes, *, suffix: str = ".png") -> s
     try:
         return ocr_image_text(tmp_path) or ""
     except OcrUnavailable as exc:
-        logger.warning("OCR unavailable for embedded image: %s", exc)
+        msg = str(exc)
+        lowered = msg.lower()
+        if (
+            "tesseract is not installed" in lowered
+            or "not in your path" in lowered
+            or "pytesseract is not installed" in lowered
+        ):
+            _disable_embedded_image_ocr_once(msg)
+        else:
+            logger.warning("OCR unavailable for embedded image: %s", exc)
         return ""
     except Exception as exc:
         logger.warning("Embedded image OCR failed: %s", exc)
