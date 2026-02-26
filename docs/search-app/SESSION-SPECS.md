@@ -680,3 +680,56 @@ This session is now ready for targeted code and UI/UX change requests.
 - DOCX/PPTX can now OCR embedded scanned images into extraction text prior to chunking.
 - Text Search References panel file names now resolve to document download links (object-storage-aware through backend endpoint).
 
+---
+
+## 24) Embedded-image OCR warning-noise reduction (2026-02-26, completed)
+
+### Trigger
+- During DOCX upload on hosts without Tesseract installed, logs emitted a warning per embedded image:
+  - `OCR unavailable for embedded image: tesseract is not installed or it's not in your PATH`
+- This created noisy logs while ingestion itself should remain non-fatal.
+
+### Change implemented
+- File: `search-app/app/text_utils.py`
+- Added a process-local guard for embedded-image OCR attempts:
+  - `_EMBEDDED_IMAGE_OCR_DISABLED`
+  - `_EMBEDDED_IMAGE_OCR_WARNED`
+  - helper `_disable_embedded_image_ocr_once(reason)`
+- Behavior now:
+  1. On first definitive backend-missing signal (e.g., missing `pytesseract` / missing `tesseract`), embedded-image OCR is disabled for the running process.
+  2. A single warning is logged once:
+     - `Embedded-image OCR disabled for this process: <reason>`
+  3. Subsequent embedded image OCR attempts in DOCX/PPTX extraction return immediately without repeated warnings.
+
+### Scope and non-functional behavior
+- Affects **embedded-image OCR path only** (DOCX/PPTX zip media scan flow).
+- Does **not** alter PDF OCR logic, chunking logic, or document ingestion success criteria.
+- Ingestion remains resilient: document text extraction/chunking proceeds even when OCR backend is unavailable.
+
+### Outcome
+- Eliminates repetitive warning spam while preserving graceful degradation.
+- Keeps behavior aligned with user requirement: OCR is attempted when available, skipped cleanly when not.
+
+---
+
+## 25) PDF OCR verification check (2026-02-26, completed)
+
+### Concern checked
+- User reported concern that PDF OCR might be broken after recent OCR/logging changes.
+
+### Verification steps performed
+1. Confirmed config gate still exists and is wired:
+   - `settings.ocr_pdf_enabled` in `app/config.py` (env: `OCR_PDF`).
+   - `extract_text_from_pdf(...)` in `app/text_utils.py` still calls `_ocr_pdf_pages(path)` when `ocr_pdf_enabled` is true.
+2. Executed a focused runtime test under project environment (`uv run`) with OCR enabled:
+   - monkeypatched `_ocr_pdf_pages` to return a known marker string.
+   - ran `extract_text_from_pdf(...)` against `dataset/Australian-Privacy-Act.pdf`.
+3. Observed results:
+   - `OCR_PDF_ENABLED= True`
+   - `OCR_CALLED= True`
+   - `HAS_MARKER= True`
+
+### Conclusion
+- PDF OCR path is functioning and still integrated in extraction flow when `OCR_PDF=true`.
+- Recent warning-noise changes were limited to embedded-image OCR (DOCX/PPTX path) and did not disable/alter PDF OCR execution.
+
