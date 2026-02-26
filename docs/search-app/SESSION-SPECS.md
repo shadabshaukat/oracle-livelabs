@@ -629,3 +629,54 @@ This session is now ready for targeted code and UI/UX change requests.
 - No new PDF thumbnails are generated, stored, uploaded, or retrieved.
 - Delete functionality remains centralized through `_delete_document_by_id(...)` and is shared by both delete endpoints.
 
+---
+
+## 23) Embedded-image OCR for DOCX/PPTX + references download links (2026-02-26, completed)
+
+### Request implemented
+- Keep PDF OCR behavior and no PDF thumbnail storage/retrieval.
+- Add OCR extraction for scanned/embedded images in DOCX and PPTX, appending OCR text to extraction output **before chunking**.
+- Ensure no thumbnail persistence is added for DOCX/PPTX OCR path.
+- Make Text Search references file names downloadable from object-storage-backed document endpoint.
+- Re-check retrieval/storage/deletion path integrity.
+
+### Code changes
+
+#### A) Embedded-image OCR added to document extractors
+- File: `search-app/app/text_utils.py`
+- New helpers:
+  - `_ocr_text_from_image_bytes(...)`
+  - `_extract_embedded_image_ocr_from_zip(...)`
+- Behavior:
+  - For DOCX: scans `word/media/*` images inside the DOCX zip and OCRs them.
+  - For PPTX: scans `ppt/media/*` images inside the PPTX zip and OCRs them.
+  - OCR text is appended to normal extracted text and normalized, then passed to chunking pipeline.
+- Important guardrail:
+  - This OCR path only extracts text; it does **not** persist thumbnails or image assets.
+
+#### B) Text Search references now clickable downloads
+- File: `search-app/app/main.py`
+- `POST /api/search` response references now include:
+  - `url: /api/doc-download?doc_id=<document_id>`
+- Frontend already renders `references[].url` as an anchor in `index.html`, so file names in the References panel are now clickable downloads.
+
+### Retrieval / storage / deletion integrity check (revalidated)
+- Upload path remains centralized: `/api/upload` -> `save_upload(...)` -> `ingest_file_path(...)`.
+- Download path remains centralized via `/api/doc-download` (local first, object storage fallback).
+- Thumbnail retrieval remains via `/api/doc-thumbnail` for docs that have thumbnail metadata (typically image docs).
+- Delete remains centralized:
+  - `DELETE /api/documents/{doc_id}`
+  - `POST /api/documents/{doc_id}/delete`
+  - both route through `_delete_document_by_id(...)`.
+
+### Validation run
+- Compile checks passed:
+  - `python3 -m py_compile search-app/app/main.py search-app/app/text_utils.py search-app/app/store.py` ✅
+- Endpoint/centralization presence checks passed:
+  - `/api/doc-download`, `/api/doc-thumbnail`, `_delete_document_by_id`, both delete routes detected in `main.py` ✅
+
+### Effective outcome
+- PDF remains OCR-capable (text/chunks) and no longer has PDF thumbnail/image extraction side effects.
+- DOCX/PPTX can now OCR embedded scanned images into extraction text prior to chunking.
+- Text Search References panel file names now resolve to document download links (object-storage-aware through backend endpoint).
+

@@ -332,6 +332,58 @@ def _ocr_pdf_pages(path: str) -> str:
     return "\n\n".join([t for t in texts if t and t.strip()])
 
 
+def _ocr_text_from_image_bytes(image_bytes: bytes, *, suffix: str = ".png") -> str:
+    if not image_bytes or not settings.ocr_enabled:
+        return ""
+    try:
+        from .vision_embeddings import ocr_image_text, OcrUnavailable
+    except Exception as exc:
+        logger.warning("OCR pipeline unavailable: %s", exc)
+        return ""
+    with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(image_bytes)
+        tmp_path = tmp.name
+    try:
+        return ocr_image_text(tmp_path) or ""
+    except OcrUnavailable as exc:
+        logger.warning("OCR unavailable for embedded image: %s", exc)
+        return ""
+    except Exception as exc:
+        logger.warning("Embedded image OCR failed: %s", exc)
+        return ""
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+def _extract_embedded_image_ocr_from_zip(path: str, media_prefix: str) -> str:
+    if not settings.ocr_enabled or not zipfile.is_zipfile(path):
+        return ""
+    image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+    texts: List[str] = []
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for name in zf.namelist():
+                if not name.startswith(media_prefix):
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in image_exts:
+                    continue
+                try:
+                    img_bytes = zf.read(name)
+                except Exception:
+                    continue
+                ocr_txt = _ocr_text_from_image_bytes(img_bytes, suffix=ext or ".png")
+                if ocr_txt:
+                    texts.append(ocr_txt)
+    except Exception as exc:
+        logger.warning("Failed embedded-image OCR scan for %s: %s", path, exc)
+        return ""
+    return "\n\n".join([t for t in texts if t and t.strip()])
+
+
 def extract_text_from_html(path: str) -> str:
     with open(path, "rb") as f:
         data = f.read()
@@ -478,6 +530,7 @@ def extract_text_from_docx(path: str) -> str:
     if not zipfile.is_zipfile(path):
         return extract_text_from_doc(path)
     # First try python-docx
+    text = ""
     try:
         doc = Document(path)
         parts: List[str] = []
@@ -485,52 +538,58 @@ def extract_text_from_docx(path: str) -> str:
             parts.append(block)
         text = "\n\n".join(p for p in parts if p)
         text = _normalize_whitespace_preserve_paragraphs(text)
-        if _looks_like_text(text):
-            return text
+        if not _looks_like_text(text):
+            text = ""
     except Exception:
-        pass
+        text = ""
 
     # Fallback: parse document.xml directly
-    try:
-        with zipfile.ZipFile(path) as zf:
-            with zf.open("word/document.xml") as fh:
-                data = fh.read()
-        root = ET.fromstring(data)
-        texts: List[str] = []
-        for node in root.iter():
-            if node.tag.endswith("}t") and node.text:
-                texts.append(node.text)
-        xml_text = "\n".join(texts)
-        xml_text = _normalize_whitespace_preserve_paragraphs(xml_text)
-        if _looks_like_text(xml_text):
-            return xml_text
-    except Exception:
-        pass
+    if not text:
+        try:
+            with zipfile.ZipFile(path) as zf:
+                with zf.open("word/document.xml") as fh:
+                    data = fh.read()
+            root = ET.fromstring(data)
+            texts: List[str] = []
+            for node in root.iter():
+                if node.tag.endswith("}t") and node.text:
+                    texts.append(node.text)
+            xml_text = "\n".join(texts)
+            xml_text = _normalize_whitespace_preserve_paragraphs(xml_text)
+            if _looks_like_text(xml_text):
+                text = xml_text
+        except Exception:
+            pass
 
     # macOS textutil can convert DOCX to text
-    if shutil.which("textutil"):
+    if not text and shutil.which("textutil"):
         try:
             result = subprocess.run(
                 ["textutil", "-convert", "txt", "-stdout", "-encoding", "UTF-8", path],
                 check=True,
                 capture_output=True,
             )
-            text = result.stdout.decode("utf-8", errors="ignore")
-            if _looks_like_text(text):
-                return _normalize_whitespace_preserve_paragraphs(text)
+            txt = result.stdout.decode("utf-8", errors="ignore")
+            if _looks_like_text(txt):
+                text = _normalize_whitespace_preserve_paragraphs(txt)
         except Exception as exc:
             logger.warning("textutil failed to extract .docx text from %s: %s", path, exc)
 
     # Fallback to strings
-    if shutil.which("strings"):
+    if not text and shutil.which("strings"):
         try:
             result = subprocess.run(["strings", "-a", path], check=True, capture_output=True)
-            text = result.stdout.decode("utf-8", errors="ignore")
-            if _looks_like_text(text):
-                return _normalize_whitespace_preserve_paragraphs(text)
+            txt = result.stdout.decode("utf-8", errors="ignore")
+            if _looks_like_text(txt):
+                text = _normalize_whitespace_preserve_paragraphs(txt)
         except Exception as exc:
             logger.warning("strings failed to extract .docx text from %s: %s", path, exc)
-    return ""
+
+    embedded_ocr = _extract_embedded_image_ocr_from_zip(path, "word/media/")
+    if embedded_ocr:
+        text = "\n\n".join([part for part in [text, embedded_ocr] if part and part.strip()])
+        text = _normalize_whitespace_preserve_paragraphs(text)
+    return text
 
 
 def _recursive_split(text: str, chunk_size: int, separators: tuple[str, ...]) -> List[str]:
@@ -714,6 +773,9 @@ def extract_text_from_pptx(path: str) -> str:
         if slide_text:
             parts.append(slide_text)
     text = "\n\n".join(parts)
+    embedded_ocr = _extract_embedded_image_ocr_from_zip(path, "ppt/media/")
+    if embedded_ocr:
+        text = "\n\n".join([part for part in [text, embedded_ocr] if part and part.strip()])
     text = _normalize_whitespace_preserve_paragraphs(text)
     return text
 
