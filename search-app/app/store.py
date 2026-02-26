@@ -450,17 +450,25 @@ def _process_image_asset(
     except Exception:
         logger.exception("Image embedding failed for %s", file_path)
 
-    if object_bucket and object_name and settings.storage_backend in {"oci", "s3", "both"}:
+    if settings.storage_backend in {"oci", "s3", "both"}:
         try:
-            thumb_object = str(Path(object_name).with_name(Path(object_name).stem + "_thumb.jpg"))
-            with open(thumb_path, "rb") as tbytes:
-                data = tbytes.read()
-            upload_object_bytes(object_bucket, thumb_object, data)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE documents SET thumbnail_object_name = %s WHERE id = %s",
-                    (thumb_object, doc_id),
-                )
+            provider = object_provider or resolve_object_provider()
+            bucket = object_bucket or default_object_bucket(provider)
+            if provider and bucket:
+                rel_file = str(_relative_upload_path(file_path)).replace("\\", "/")
+                rel_thumb_obj = str(_relative_upload_path(str(thumb_path))).replace("\\", "/")
+                with open(file_path, "rb") as fbytes:
+                    upload_object_bytes(bucket, rel_file, fbytes.read())
+                with open(thumb_path, "rb") as tbytes:
+                    upload_object_bytes(bucket, rel_thumb_obj, tbytes.read())
+                logger.info("Uploaded image asset + thumbnail to object storage: %s, %s", rel_file, rel_thumb_obj)
+                if object_name:
+                    thumb_object = str(Path(object_name).with_name(Path(object_name).stem + "_thumb.jpg"))
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE documents SET thumbnail_object_name = %s WHERE id = %s",
+                            (thumb_object, doc_id),
+                        )
         except Exception as exc:
             logger.warning("Failed to mirror thumbnail to object storage: %s", exc)
 

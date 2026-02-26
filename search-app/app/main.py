@@ -794,6 +794,14 @@ async def api_image_thumbnail(request: Request, image_id: int):
                 return StreamingResponse(stream, media_type=content_type or "image/jpeg")
         except Exception:
             logger.exception("Failed to stream thumbnail from object storage: %s", thumb_object_name)
+    if obj_provider and obj_bucket and thumb_rel:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, str(thumb_rel).replace("\\", "/"))
+                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
+        except Exception:
+            logger.exception("Failed to stream thumbnail from object storage (image path): %s", thumb_rel)
     return JSONResponse(status_code=404, content={"error": "thumbnail unavailable"})
 
 
@@ -832,6 +840,14 @@ async def api_image_asset(request: Request, image_id: int):
                 return StreamingResponse(stream, media_type=content_type or "image/jpeg")
         except Exception:
             logger.exception("Failed to stream image asset from object storage: %s", obj_name)
+    if obj_provider and obj_bucket and file_rel:
+        try:
+            store = get_object_store(obj_provider)
+            if store:
+                stream, _length, content_type = store.get_object_stream(obj_bucket, str(file_rel).replace("\\", "/"))
+                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
+        except Exception:
+            logger.exception("Failed to stream image asset from object storage (image path): %s", file_rel)
     return JSONResponse(status_code=404, content={"error": "image unavailable"})
 
 
@@ -1020,6 +1036,7 @@ async def api_kb(
 
 
 def _delete_document_by_id(uid: int, doc_id: int) -> dict:
+    image_rows: List[tuple[str | None, str | None]] = []
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1034,6 +1051,11 @@ def _delete_document_by_id(uid: int, doc_id: int) -> dict:
             obj_bucket = row[2]
             obj_name = row[3]
             thumb_object_name = row[4]
+            cur.execute(
+                "SELECT file_path, thumbnail_path FROM image_assets WHERE document_id = %s",
+                (int(doc_id),),
+            )
+            image_rows = cur.fetchall() or []
             cur.execute("DELETE FROM documents WHERE id = %s AND user_id = %s", (int(doc_id), uid))
 
     # Best-effort cleanup of local assets (source file + thumbnails)
@@ -1045,21 +1067,44 @@ def _delete_document_by_id(uid: int, doc_id: int) -> dict:
     except Exception:
         logger.warning("Failed to delete source file for doc_id=%s", doc_id)
 
-    try:
-        if thumb_object_name and obj_provider and obj_bucket:
-            store = get_object_store(obj_provider)
-            if store:
-                store.delete_object(obj_bucket, thumb_object_name)
-    except Exception:
-        logger.warning("Failed to delete thumbnail object for doc_id=%s", doc_id)
+    if settings.storage_backend in {"oci", "s3", "both"}:
+        try:
+            if thumb_object_name and obj_provider and obj_bucket:
+                store = get_object_store(obj_provider)
+                if store:
+                    store.delete_object(obj_bucket, thumb_object_name)
+        except Exception:
+            logger.warning("Failed to delete thumbnail object for doc_id=%s", doc_id)
 
+        try:
+            if obj_name and obj_provider and obj_bucket:
+                store = get_object_store(obj_provider)
+                if store:
+                    store.delete_object(obj_bucket, obj_name)
+        except Exception:
+            logger.warning("Failed to delete object storage source for doc_id=%s", doc_id)
+
+        try:
+            if obj_provider and obj_bucket:
+                store = get_object_store(obj_provider)
+                if store:
+                    for file_path, thumb_path in image_rows:
+                        if file_path:
+                            store.delete_object(obj_bucket, str(file_path).lstrip("/"))
+                        if thumb_path:
+                            store.delete_object(obj_bucket, str(thumb_path).lstrip("/"))
+        except Exception:
+            logger.warning("Failed to delete image assets from object storage for doc_id=%s", doc_id)
+
+    # Best-effort cleanup of local image assets
     try:
-        if obj_name and obj_provider and obj_bucket:
-            store = get_object_store(obj_provider)
-            if store:
-                store.delete_object(obj_bucket, obj_name)
+        for file_path, thumb_path in image_rows:
+            for rel in (file_path, thumb_path):
+                asset_path = _resolve_asset_path(rel)
+                if asset_path and asset_path.exists():
+                    asset_path.unlink()
     except Exception:
-        logger.warning("Failed to delete object storage source for doc_id=%s", doc_id)
+        logger.warning("Failed to delete local image assets for doc_id=%s", doc_id)
 
     return {"ok": True, "document_id": int(doc_id)}
 
