@@ -1,6 +1,6 @@
 # Search App Session Specs (Context-Recovery Document)
 
-Last updated: 2026-02-26 19:07 (AEDT)
+Last updated: 2026-02-26 21:51 (AEDT)
 Scope scanned: `/Users/shadab/Downloads/oracle-livelabs/search-app`
 
 ---
@@ -823,4 +823,104 @@ This session is now ready for targeted code and UI/UX change requests.
   - OCR pipeline (including PDF OCR) is operational in runtime checks.
   - Session/search history and document retrieval/delete route contracts are present.
   - No compile-time regressions detected across backend Python modules.
+
+---
+
+## 28) E2E ingestion/OCR validation with `search-app/sample` assets (2026-02-26)
+
+### Test set used
+- `sample/Mariam.pdf` (scanned PDF candidate)
+- `sample/Mariam.docx` (DOCX with embedded scanned/media content)
+- `sample/Heatwave on AWS Provisioning of Service.docx`
+- `sample/ShadabNZCompete_18_v1_20260224.pptx`
+- `sample/Large_bonfire.jpg`
+
+### Observed upload/ingest results (live API)
+- `Mariam.pdf` → **26 chunks** ✅
+- `Mariam.docx` → **4201 chunks** ⚠️ (abnormally high; noisy extraction)
+- `Heatwave...docx` → **66 chunks** ✅
+- `Shadab...pptx` → **19 chunks** ✅
+- `Large_bonfire.jpg` → image asset path, **0 text chunks** (expected) ✅
+
+### Root-cause identified for DOCX anomaly
+- `extract_text_from_docx(...)` could fall back to `strings -a` when structured parsing confidence failed.
+- For ZIP-based DOCX containers, `strings` can emit archive internals that pass weak text heuristics and massively inflate chunk counts.
+
+### Fix applied
+- File: `search-app/app/text_utils.py`
+- Removed `strings` fallback for DOCX specifically.
+- DOCX extraction now stays on:
+  1. python-docx block extraction
+  2. `word/document.xml` parsing
+  3. `textutil` conversion (if available)
+  4. embedded-image OCR append
+- This prevents container-noise ingestion and restores sane chunk behavior.
+
+### Additional OCR evidence gathered
+- Runtime PDF OCR check remained positive (non-empty OCR output from `_ocr_pdf_pages`).
+- `Mariam.pdf` persisted with expected chunk count (26) in live ingest.
+
+### Notes
+- Multiple long-running curl upload tests in this session caused intermittent command timeouts in terminal harness; API/server logs still show successful upload/ingest events.
+- After this DOCX fallback fix, rerun ingest for `Mariam.docx` to confirm normalized chunk count in your environment.
+
+---
+
+## 29) Post-fix verification status + environment finding (2026-02-26, completed)
+
+### What was re-verified
+- Direct extractor verification against the patched code path:
+  - `uv run python` calling `extract_text_from_docx('sample/Mariam.docx')`
+  - Result: clean text output, `len=27844`, starts with expected document prose (no ZIP/container noise at head).
+
+### What still failed in API ingest during this run
+- Live upload via `/api/upload` still produced:
+  - `Mariam.docx` with `4201` chunks
+  - chunk previews containing ZIP/container artifacts (`[Content_Types].xml`, `_rels/.rels`, `word/document.xml`, random binary-like strings)
+
+### Diagnosis from test harness behavior
+- Root endpoint health intermittently returned `000` while old upload curls remained stuck/running.
+- Multiple overlapping background test processes were present (`e2e_run3.sh`, long-running curl uploads), causing unreliable execution state.
+- This creates a strong indication the ingest requests were not consistently hitting a cleanly restarted server process with the latest patched module loaded.
+
+### Conclusion
+- **Code-level fix is present and locally validated** in `text_utils.extract_text_from_docx`.
+- **API-level verification remains inconclusive in this session** due to unstable/stale runtime process state.
+- Next deterministic verification should be done after a clean server restart (single process), then re-upload `sample/Mariam.docx` and confirm chunk count/snippets are normalized.
+
+---
+
+## 30) Oracle Linux 10 remote-host E2E validation (2026-02-26, completed)
+
+### Remote target
+- Host: `opc@140.245.248.170` (Oracle Linux 10)
+- App path: `/home/opc/oracle-livelabs/search-app`
+- Sample assets copied from local into remote `sample/`.
+
+### Remote runtime observations
+- App process present and serving on `127.0.0.1:8000`.
+- OCR backend warning on remote during DOCX extraction:
+  - `Embedded-image OCR disabled for this process: tesseract is not installed or it's not in your PATH ...`
+
+### Critical remote extraction result (DOCX)
+- Direct remote extractor check (`uv run python`, `extract_text_from_docx('sample/Mariam.docx')`) produced:
+  - `chars=621597`
+  - output starts with ZIP/container artifact text (`[Content_Types].xml`, `_rels/.rels`, `word/document.xml`, binary-like fragments)
+- This is the **same noise signature** as the earlier bad-ingest symptom.
+
+### Remote API E2E outcomes (captured)
+- Register API: `200` ✅
+- Upload `sample/Mariam.pdf`: `200`, `chunks=11` ✅
+- Upload `sample/Large_bonfire.jpg`: `200`, `chunks=0` ✅
+- Upload `sample/Mariam.docx`: request repeatedly hangs/runs long and does not complete within capped timeout window ❌
+  - remote process remained stuck on curl upload for DOCX
+  - downstream search/download checks in that script were blocked by this step
+
+### Conclusion
+- The Oracle Linux host currently behaves differently from the validated local-mac patched state.
+- On remote, DOCX extraction path is still producing container-noise output and DOCX API ingest is effectively stalled under this test run.
+- PDF and image ingestion paths are functioning on remote.
+
+### Practical next action on remote
+- Ensure remote `app/text_utils.py` is the same patched revision as local (DOCX `strings` fallback removed), then restart app and rerun DOCX ingest validation.
 
