@@ -600,15 +600,9 @@ def extract_text_from_docx(path: str) -> str:
         except Exception as exc:
             logger.warning("textutil failed to extract .docx text from %s: %s", path, exc)
 
-    # Fallback to strings
-    if not text and shutil.which("strings"):
-        try:
-            result = subprocess.run(["strings", "-a", path], check=True, capture_output=True)
-            txt = result.stdout.decode("utf-8", errors="ignore")
-            if _looks_like_text(txt):
-                text = _normalize_whitespace_preserve_paragraphs(txt)
-        except Exception as exc:
-            logger.warning("strings failed to extract .docx text from %s: %s", path, exc)
+    # NOTE: avoid `strings` fallback for DOCX archives because it can produce
+    # noisy ZIP/container artifacts that look text-like and explode chunk counts.
+    # For DOCX, prefer structured extractors + embedded-image OCR only.
 
     embedded_ocr = _extract_embedded_image_ocr_from_zip(path, "word/media/")
     if embedded_ocr:
