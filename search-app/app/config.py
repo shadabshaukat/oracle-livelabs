@@ -119,6 +119,7 @@ class Settings:
     ocr_enabled: bool = _get_bool("OCR_ENABLED", True)
     ocr_pdf_enabled: bool = _get_bool("OCR_PDF", False)
     ocr_engine: str = os.getenv("OCR_ENGINE", "tesseract").lower()
+    ocr_tesseract_cmd: Optional[str] = os.getenv("OCR_TESSERACT_CMD")
     ocr_min_chars: int = int(os.getenv("OCR_MIN_CHARS", "12"))
     ocr_max_chars: int = int(os.getenv("OCR_MAX_CHARS", "8000"))
 
