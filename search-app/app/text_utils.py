@@ -24,6 +24,8 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+# Safety guardrails are controlled via environment-backed settings.
+
 
 # Embedded-image OCR fallback guard to avoid repeated per-image warnings when OCR backend
 # is not available (e.g., tesseract missing on host).
@@ -388,19 +390,37 @@ def _extract_embedded_image_ocr_from_zip(path: str, media_prefix: str) -> str:
         return ""
     image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
     texts: List[str] = []
+    processed = 0
+    total_bytes = 0
     try:
         with zipfile.ZipFile(path) as zf:
             for name in zf.namelist():
+                if _EMBEDDED_IMAGE_OCR_DISABLED:
+                    break
                 if not name.startswith(media_prefix):
                     continue
                 ext = os.path.splitext(name)[1].lower()
                 if ext not in image_exts:
                     continue
+                if processed >= settings.embedded_ocr_max_images:
+                    logger.info("Embedded-image OCR capped at %s images for %s", settings.embedded_ocr_max_images, path)
+                    break
                 try:
                     img_bytes = zf.read(name)
                 except Exception:
                     continue
+                if not img_bytes:
+                    continue
+                total_bytes += len(img_bytes)
+                if total_bytes > settings.embedded_ocr_max_total_bytes:
+                    logger.info(
+                        "Embedded-image OCR byte cap reached for %s (>%s bytes)",
+                        path,
+                        settings.embedded_ocr_max_total_bytes,
+                    )
+                    break
                 ocr_txt = _ocr_text_from_image_bytes(img_bytes, suffix=ext or ".png")
+                processed += 1
                 if ocr_txt:
                     texts.append(ocr_txt)
     except Exception as exc:
@@ -522,29 +542,46 @@ def extract_text_from_doc(path: str) -> str:
                 ["textutil", "-convert", "txt", "-stdout", "-encoding", "UTF-8", path],
                 check=True,
                 capture_output=True,
+                timeout=settings.doc_subprocess_extract_timeout_s,
             )
             text = result.stdout.decode("utf-8", errors="ignore")
             if _looks_like_text(text):
                 return _normalize_whitespace_preserve_paragraphs(text)
             logger.warning("textutil output looked non-textual for %s; falling back", path)
+        except subprocess.TimeoutExpired:
+            logger.warning("textutil timed out extracting .doc from %s", path)
         except Exception as exc:
             logger.warning("textutil failed to extract .doc text from %s: %s", path, exc)
     # Fallback to antiword if installed
     if shutil.which("antiword"):
         try:
-            result = subprocess.run(["antiword", path], check=True, capture_output=True)
+            result = subprocess.run(
+                ["antiword", path],
+                check=True,
+                capture_output=True,
+                timeout=settings.doc_subprocess_extract_timeout_s,
+            )
             text = result.stdout.decode("utf-8", errors="ignore")
             if _looks_like_text(text):
                 return _normalize_whitespace_preserve_paragraphs(text)
+        except subprocess.TimeoutExpired:
+            logger.warning("antiword timed out extracting .doc from %s", path)
         except Exception as exc:
             logger.warning("antiword failed to extract .doc text from %s: %s", path, exc)
     # Fallback to strings when other tools fail
     if shutil.which("strings"):
         try:
-            result = subprocess.run(["strings", "-a", path], check=True, capture_output=True)
+            result = subprocess.run(
+                ["strings", "-a", path],
+                check=True,
+                capture_output=True,
+                timeout=settings.doc_subprocess_extract_timeout_s,
+            )
             text = result.stdout.decode("utf-8", errors="ignore")
             if _looks_like_text(text):
                 return _normalize_whitespace_preserve_paragraphs(text)
+        except subprocess.TimeoutExpired:
+            logger.warning("strings timed out extracting .doc from %s", path)
         except Exception as exc:
             logger.warning("strings failed to extract .doc text from %s: %s", path, exc)
     return ""
@@ -593,10 +630,13 @@ def extract_text_from_docx(path: str) -> str:
                 ["textutil", "-convert", "txt", "-stdout", "-encoding", "UTF-8", path],
                 check=True,
                 capture_output=True,
+                timeout=settings.doc_subprocess_extract_timeout_s,
             )
             txt = result.stdout.decode("utf-8", errors="ignore")
             if _looks_like_text(txt):
                 text = _normalize_whitespace_preserve_paragraphs(txt)
+        except subprocess.TimeoutExpired:
+            logger.warning("textutil timed out extracting .docx from %s", path)
         except Exception as exc:
             logger.warning("textutil failed to extract .docx text from %s: %s", path, exc)
 
