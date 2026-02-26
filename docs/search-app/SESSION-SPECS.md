@@ -586,3 +586,46 @@ This session is now ready for targeted code and UI/UX change requests.
 - Session activity logging, list/detail API contracts, and UI history expansion/load-more flow are now aligned.
 - The previously broken history JS section is repaired and no longer syntactically malformed.
 
+---
+
+## 22) PDF OCR-only ingest + delete flow audit (2026-02-26, completed)
+
+### Request implemented
+- Removed PDF thumbnail/image extraction behavior entirely.
+- Kept PDF OCR behavior for text extraction/chunking only.
+- Re-checked centralized delete + upload/download/retrieve flow for consistency.
+
+### Code changes
+- File: `search-app/app/store.py`
+  - Removed PDF page image extraction path from `ingest_file_path(...)`.
+  - Removed `_extract_pdf_page_images(...)` helper function.
+  - Result: PDFs now ingest as document text/chunks only (with optional OCR in `text_utils.py`), without creating `image_assets` rows or PDF-derived thumbnails.
+
+### OCR behavior retained
+- File: `search-app/app/text_utils.py`
+  - `extract_text_from_pdf(...)` still supports OCR fallback via `settings.ocr_pdf_enabled`.
+  - OCR output is merged into extracted text and then chunked/embedded normally.
+
+### Upload / download / retrieve / delete audit notes
+- **Upload** (`/api/upload` in `main.py`):
+  - Uses `save_upload(...)` -> `ingest_file_path(...)`.
+  - For PDFs, ingestion now writes document + chunks only (no PDF thumbnail/image asset side effects).
+- **Download** (`/api/doc-download`):
+  - Centralized source retrieval: local path first, object storage fallback if configured.
+- **Thumbnail retrieval** (`/api/doc-thumbnail`):
+  - Still available for image-backed docs; PDFs ingested after this change will have no thumbnail metadata and return unavailable (expected).
+- **Delete** (centralized):
+  - Both `DELETE /api/documents/{doc_id}` and `POST /api/documents/{doc_id}/delete` route to `_delete_document_by_id(...)`.
+  - Helper removes document DB row and performs best-effort cleanup for local/object storage source + related image assets.
+
+### Validation executed
+- `python3 -m py_compile search-app/app/store.py search-app/app/main.py search-app/app/text_utils.py` ✅
+- Static assertions on `store.py`:
+  - `_extract_pdf_page_images(` reference removed ✅
+  - `pdf_image_extraction_enabled` usage removed ✅
+
+### Effective outcome
+- PDF pipeline is now OCR/text-only for ingestion.
+- No new PDF thumbnails are generated, stored, uploaded, or retrieved.
+- Delete functionality remains centralized through `_delete_document_by_id(...)` and is shared by both delete endpoints.
+
