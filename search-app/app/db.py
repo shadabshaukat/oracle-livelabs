@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from typing import Optional
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .config import Settings, build_database_url, settings
 from .embeddings import get_text_embedding_dim
@@ -21,20 +22,40 @@ def get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
         dsn = build_database_url(settings)
+        connect_timeout = max(1, int(settings.db_connect_timeout_seconds))
         _pool = ConnectionPool(
             conninfo=dsn,
             min_size=settings.db_pool_min_size,
             max_size=settings.db_pool_max_size,
-            kwargs={"autocommit": True},
+            kwargs={"autocommit": True, "connect_timeout": connect_timeout},
         )
-        logger.info("Initialized PostgreSQL connection pool (min=%s, max=%s)", settings.db_pool_min_size, settings.db_pool_max_size)
+        logger.info(
+            "Initialized PostgreSQL connection pool (min=%s, max=%s, conn_timeout=%ss)",
+            settings.db_pool_min_size,
+            settings.db_pool_max_size,
+            connect_timeout,
+        )
     return _pool
+
+
+def close_pool() -> None:
+    global _pool
+    if _pool is None:
+        return
+    try:
+        _pool.close()
+    except Exception:
+        logger.exception("Failed closing PostgreSQL connection pool")
+    finally:
+        _pool = None
 
 
 @contextlib.contextmanager
 def get_conn():
     pool = get_pool()
-    with pool.connection() as conn:
+    timeout = float(settings.db_pool_timeout_seconds)
+    timeout = timeout if timeout > 0 else 30.0
+    with pool.connection(timeout=timeout) as conn:
         yield conn
 
 
@@ -512,6 +533,48 @@ def init_db(s: Settings = settings) -> None:
             metric,
             s.pgvector_lists,
         )
+
+
+def init_db_with_retry(s: Settings = settings) -> None:
+    if not bool(s.db_startup_retry_enabled):
+        init_db(s)
+        return
+
+    max_wait = max(0, int(s.db_startup_max_wait_seconds))
+    initial_delay = max(0.5, float(s.db_startup_initial_retry_delay_seconds))
+    max_delay = max(initial_delay, float(s.db_startup_max_retry_delay_seconds))
+    backoff = max(1.0, float(s.db_startup_backoff_multiplier))
+    deadline = time.monotonic() + max_wait
+    delay = initial_delay
+    attempt = 0
+
+    while True:
+        attempt += 1
+        try:
+            init_db(s)
+            if attempt > 1:
+                logger.info("Database startup succeeded after %s attempts", attempt)
+            return
+        except (PoolTimeout, psycopg.OperationalError, psycopg.Error, OSError, RuntimeError, ValueError) as exc:
+            close_pool()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.exception(
+                    "Database startup failed after %s attempts and waiting up to %ss",
+                    attempt,
+                    max_wait,
+                )
+                raise
+            sleep_for = min(delay, remaining)
+            logger.warning(
+                "Database not ready at startup (attempt %s): %s. Retrying in %.1fs (%.1fs remaining)",
+                attempt,
+                exc,
+                sleep_for,
+                remaining,
+            )
+            time.sleep(sleep_for)
+            delay = min(max_delay, delay * backoff)
 
 
 def set_search_runtime(cur: psycopg.Cursor, probes: int):

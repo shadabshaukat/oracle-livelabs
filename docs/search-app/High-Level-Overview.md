@@ -160,7 +160,7 @@ Configuration and deployment
     - STORAGE_BACKEND: local|oci|both; OCI_OS_BUCKET_NAME required for oci/both and OCI credentials available.
     - LLM_PROVIDER: oci or openai + credentials (OCI: region + endpoint + compartment + model id).
 
-  - Run: ./run.sh or uv sync --extra pdf && uv run searchapp (available at [](http://0.0.0.0:8000)<http://0.0.0.0:8000>).
+  - Run: ./run.sh or uv sync --extra pdf && uv run searchapp (available at [http://0.0.0.0:8000](http://0.0.0.0:8000)).
 
 - Infrastructure:
 

@@ -79,6 +79,17 @@ class Settings:
     db_sslmode: str = os.getenv("DB_SSLMODE", "require")
     db_pool_min_size: int = int(os.getenv("DB_POOL_MIN_SIZE", "1"))
     db_pool_max_size: int = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
+    db_pool_timeout_seconds: float = float(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
+    db_connect_timeout_seconds: int = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "10"))
+    db_startup_retry_enabled: bool = _get_bool("DB_STARTUP_RETRY_ENABLED", True)
+    db_startup_max_wait_seconds: int = int(os.getenv("DB_STARTUP_MAX_WAIT_SECONDS", "180"))
+    db_startup_initial_retry_delay_seconds: float = float(
+        os.getenv("DB_STARTUP_INITIAL_RETRY_DELAY_SECONDS", "2")
+    )
+    db_startup_max_retry_delay_seconds: float = float(
+        os.getenv("DB_STARTUP_MAX_RETRY_DELAY_SECONDS", "15")
+    )
+    db_startup_backoff_multiplier: float = float(os.getenv("DB_STARTUP_BACKOFF_MULTIPLIER", "1.8"))
 
     # Embeddings
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
@@ -157,6 +168,10 @@ class Settings:
     sql_max_rows: int = int(os.getenv("SQL_MAX_ROWS", "200"))
     sql_default_rows: int = int(os.getenv("SQL_DEFAULT_ROWS", "200"))
     sql_memory_turns: int = int(os.getenv("SQL_MEMORY_TURNS", "10"))
+    sql_agentic_mode_default: bool = _get_bool("SQL_AGENTIC_MODE_DEFAULT", True)
+    sql_agentic_max_retries: int = int(os.getenv("SQL_AGENTIC_MAX_RETRIES", "1"))
+    sql_agentic_sample_rows: int = int(os.getenv("SQL_AGENTIC_SAMPLE_ROWS", "3"))
+    sql_agentic_sample_max_tables: int = int(os.getenv("SQL_AGENTIC_SAMPLE_MAX_TABLES", "3"))
     sql_persistent_memory_enabled: bool = _get_bool("SQL_PERSISTENT_MEMORY_ENABLED", False)
     text_persistent_memory_enabled: bool = _get_bool("TEXT_PERSISTENT_MEMORY_ENABLED", False)
     image_persistent_memory_enabled: bool = _get_bool("IMAGE_PERSISTENT_MEMORY_ENABLED", False)
