@@ -995,6 +995,24 @@
     const historySessionState = new Map();
     const historyActivityLimit = 20;
 
+    function formatActivityTypeLabel(activityType) {
+      const value = String(activityType || '').trim();
+      if (!value) return '';
+      const labelMap = {
+        text_hybrid: 'Text · Hybrid',
+        text_semantic: 'Text · Semantic',
+        text_fulltext: 'Text · Full-text',
+        text_rag: 'Text · RAG',
+        image_search: 'Image search',
+        sql_search: 'SQL search',
+        deep_research: 'Deep Research'
+      };
+      if (labelMap[value]) return labelMap[value];
+      return value
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
     function getSpaceLabel(spaceId) {
       if (spaceId == null) return 'All spaces';
       const match = state.spaces.find(s => String(s.id) === String(spaceId));
@@ -1061,17 +1079,20 @@
       return qs ? `?${qs}` : '';
     }
 
-    function updateHistoryPager(hasNext) {
+    function updateHistoryPager({ count = 0, total = 0 } = {}) {
       const prevBtn = document.getElementById('historyPrevBtn');
       const nextBtn = document.getElementById('historyNextBtn');
       const label = document.getElementById('historyPageLabel');
-      const start = historyState.offset + 1;
-      const end = historyState.offset + historyState.limit;
+      const safeTotal = Math.max(0, Number(total) || 0);
+      const start = safeTotal > 0 ? historyState.offset + 1 : 0;
+      const end = safeTotal > 0 ? Math.min(historyState.offset + count, safeTotal) : 0;
       if (label) {
-        label.textContent = `Showing ${start}-${end}`;
+        label.textContent = safeTotal > 0
+          ? `Showing ${start}-${end} of ${safeTotal}`
+          : 'Showing 0-0 of 0';
       }
       if (prevBtn) prevBtn.disabled = historyState.offset <= 0;
-      if (nextBtn) nextBtn.disabled = !hasNext;
+      if (nextBtn) nextBtn.disabled = (historyState.offset + count) >= safeTotal;
     }
 
     async function loadSearchHistory() {
@@ -1092,7 +1113,8 @@
         });
         const data = await api(`/api/search-history${query}`);
         const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-        updateHistoryPager(sessions.length === historyState.limit);
+        const total = Number(data.total || 0);
+        updateHistoryPager({ count: sessions.length, total });
         if (!sessions.length) {
           list.textContent = 'No search sessions yet.';
           if (status) status.textContent = '';
@@ -1101,15 +1123,15 @@
         list.innerHTML = '';
         const buildActivityBadges = (activityMap, fallbackType) => {
           if (!activityMap || typeof activityMap !== 'object') {
-            return fallbackType ? `<span class="badge">${escapeHtml(fallbackType)}</span>` : '';
+            return fallbackType ? `<span class="badge">${escapeHtml(formatActivityTypeLabel(fallbackType))}</span>` : '';
           }
           const entries = Object.entries(activityMap).filter(([key]) => key);
           if (!entries.length) {
-            return fallbackType ? `<span class="badge">${escapeHtml(fallbackType)}</span>` : '';
+            return fallbackType ? `<span class="badge">${escapeHtml(formatActivityTypeLabel(fallbackType))}</span>` : '';
           }
           entries.sort((a, b) => Number(b[1]) - Number(a[1]));
           return entries
-            .map(([key, count]) => `<span class="badge badge--activity">${escapeHtml(key)} × ${escapeHtml(String(count))}</span>`)
+            .map(([key, count]) => `<span class="badge badge--activity">${escapeHtml(formatActivityTypeLabel(key))} × ${escapeHtml(String(count))}</span>`)
             .join(' ');
         };
 
@@ -1149,6 +1171,10 @@
               <div>
                 <div class="history-meta-label">Last activity</div>
                 <div class="history-meta-value">${escapeHtml(formatTime(session.last_activity_at))}</div>
+              </div>
+              <div>
+                <div class="history-meta-label">Total activities</div>
+                <div class="history-meta-value">${escapeHtml(String(session.activity_count ?? 0))}</div>
               </div>
               <div>
                 <div class="history-meta-label">Session ID</div>
@@ -1240,9 +1266,13 @@
               }
               attachPayloadControls(container);
               details.dataset.activityOffset = String(offset + activities.length);
-              if (loadMoreBtn) loadMoreBtn.hidden = activities.length < historyActivityLimit;
+              if (loadMoreBtn) {
+                loadMoreBtn.hidden = !Boolean(detail?.has_more);
+              }
               if (statusEl) {
-                statusEl.textContent = activities.length ? `Loaded ${offset + activities.length}` : '';
+                const loaded = offset + activities.length;
+                const total = Number(detail?.total || loaded || 0);
+                statusEl.textContent = total ? `Loaded ${loaded} of ${total}` : '';
               }
             } catch (e) {
               if (container) container.textContent = 'Failed to load session details.';
@@ -1263,7 +1293,7 @@
           });
           list.appendChild(details);
         });
-        if (status) status.textContent = '';
+        if (status) status.textContent = total ? `${total} session(s)` : '';
       } catch (e) {
         if (status) status.textContent = 'Failed to load history.';
         list.textContent = 'Failed to load search history.';
