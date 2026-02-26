@@ -1,6 +1,6 @@
 # Search App Session Specs (Context-Recovery Document)
 
-Last updated: 2026-02-26 21:51 (AEDT)
+Last updated: 2026-02-26 22:49 (AEDT)
 Scope scanned: `/Users/shadab/Downloads/oracle-livelabs/search-app`
 
 ---
@@ -923,4 +923,251 @@ This session is now ready for targeted code and UI/UX change requests.
 
 ### Practical next action on remote
 - Ensure remote `app/text_utils.py` is the same patched revision as local (DOCX `strings` fallback removed), then restart app and rerun DOCX ingest validation.
+
+---
+
+## 31) Full local + remote rerun after patch sync (2026-02-26, completed)
+
+### Scope executed
+- Re-ran broad API/platform checks across **local** and **Oracle Linux remote** after reported remote patch sync, including:
+  - auth/register
+  - `/api/health`, `/api/ready`, `/api/kb`, `/api/search-history`
+  - upload: PDF + image + DOCX
+  - text search + image search
+  - doc download + delete + post-delete download check
+
+### Local rerun result (stable)
+- Local run produced successful end-to-end status:
+  - register/health/ready/kb/history: `200`
+  - upload PDF/image/DOCX: `200/200/200`
+  - DOCX chunk count: `18` (normal)
+  - search: `200`
+  - image-search: `200`
+  - doc-download PDF: `200`
+  - delete PDF: `200`
+  - post-delete download: `404` (expected)
+- Conclusion (local): platform behavior is consistent with expected healthy state.
+
+### Remote rerun result (post-sync still divergent)
+- Remote compare artifacts confirmed:
+  - core endpoints: `200`
+  - upload PDF/image: `200`
+  - upload DOCX: `200` in one run, but with **`chunks=4018`** (container-noise signature)
+- Additional remote rerun via script showed DOCX upload instability:
+  - long-running DOCX upload process had to be killed
+  - script summary emitted `{"pdf": 113, "img": 114, "docx": null}`
+  - indicates DOCX path still non-deterministic on remote despite patch-sync claim.
+
+### Cross-environment parity verdict
+- **Not yet fully consistent across local and remote.**
+- PDF/image and most core APIs align.
+- Primary parity gap remains remote DOCX ingestion/extraction:
+  - either abnormally high DOCX chunking (`~4k` chunks) or timeout/hang behavior,
+  - while local DOCX ingestion is normal (`18` chunks).
+
+### Practical closure status
+- User-requested broad rerun was completed for the reachable matrix and documented.
+- Final blocker to claim full parity: make remote DOCX extraction deterministic and match local chunk profile.
+
+---
+
+## 32) All-files sample rerun (new files included) — local + remote (2026-02-26)
+
+### New scope requested
+- User added additional files under `search-app/sample` and requested:
+  1. local test again for all sample files,
+  2. copy all sample files to remote,
+  3. remote full-cycle test for all files.
+
+### Files in scope (9 total)
+- Heatwave on AWS Provisioning of Service.docx
+- image001.png
+- Large_bonfire.jpg
+- Mariam.docx
+- Mariam.pdf
+- PRSH1032 - Leverage Your OCI & PostgreSQL Skills to Accelerate AI Outcomes New.pdf
+- RDS Oracle Backup to S3 and Copy Dump files to Oracle Object Storage.docx
+- ShadabNZCompete_18_v1_20260224.pptx
+- VPN Connection via AWS Transit Gateway to OCI.docx
+
+### Copy-to-remote status
+- Remote sample directory now contains all 9 files (`COUNT=9`), including newly added DOCX files.
+
+### Local all-files execution status
+- Local scripted run processed uploads with following observed upload codes:
+  - `200`: Heatwave.docx, Large_bonfire.jpg, Mariam.docx, Mariam.pdf, PRSH1032.pdf, RDS Oracle Backup....docx, ShadabNZCompete....pptx
+  - pending/blank at capture cut: `VPN Connection via AWS Transit Gateway to OCI.docx`
+  - `image001.png` not reached before run was blocked by long-running tail DOCX upload step.
+- This indicates local run progressed through the majority of files successfully, but did not complete a stable full terminal summary due final long-running DOCX tail step.
+
+### Remote all-files execution status
+- Remote scripted run confirmed:
+  - `200`: Heatwave.docx, image001.png, Large_bonfire.jpg
+  - stalled/blank: `Mariam.docx`
+- Because `Mariam.docx` stalled, remote run did not continue to remaining files in that same pass.
+
+### Practical conclusion for this all-files pass
+- **Complete deterministic all-files full-cycle closure is still blocked by DOCX long-running behavior** (local tail DOCX step and remote `Mariam.docx` step).
+- Sample sync to remote is complete, and non-blocked files show expected success where executed.
+- The recurring blocker remains DOCX ingestion stability; once controlled (timeout/queue/process cleanup + extractor parity), re-running the same all-files harness should produce complete full-cycle summaries in one pass.
+
+---
+
+## 33) DOCX/DOC ingestion pipeline regression fix (OCR-related) — 2026-02-26
+
+### User-reported issue
+- DOCX uploads became very slow / appeared stuck after OCR-related changes, despite earlier stable behavior.
+
+### Root-cause review outcome
+- The DOCX path itself no longer uses `strings` fallback (already fixed earlier), but runtime still had two latency amplifiers:
+  1. **Unbounded embedded-image OCR scan** across all zip media entries in DOCX/PPTX.
+  2. Potentially long-running **subprocess extractors** (`textutil`/`antiword`/`strings`) without hard timeouts for DOC/DOCX/DOC fallback paths.
+- These could cause long end-to-end extraction durations for media-heavy docs and make upload appear hung.
+
+### Fixes applied in `search-app/app/text_utils.py`
+1. Added extractor guardrail constants:
+   - `SUBPROCESS_EXTRACT_TIMEOUT_S = 25`
+   - `EMBEDDED_OCR_MAX_IMAGES = 12`
+   - `EMBEDDED_OCR_MAX_TOTAL_BYTES = 20 * 1024 * 1024`
+2. Added timeout protection to subprocess-based extraction calls:
+   - `.doc`: `textutil`, `antiword`, `strings`
+   - `.docx`: `textutil` fallback
+3. Added bounded embedded-media OCR behavior for DOCX/PPTX zip scans:
+   - stop after max image count
+   - stop after aggregate image-byte cap
+   - short-circuit if embedded OCR already disabled for process
+
+### Validation (local focused run)
+- Compile check passed:
+  - `uv run python -m py_compile app/text_utils.py` ✅
+- Timed extractor checks:
+  - `sample/Mariam.docx` → `17.20s`, `27844 chars`, clean prose head ✅
+  - `sample/RDS Oracle Backup to S3 and Copy Dump files to Oracle Object Storage.docx` → `3.05s`, `47904 chars` ✅
+  - `sample/VPN Connection via AWS Transit Gateway to OCI.docx` → `5.69s`, `24689 chars` ✅
+
+### Practical impact
+- DOCX/DOC extraction is now guarded against runaway OCR/subprocess time costs.
+- Upload latency should be more predictable, with preserved extraction quality and less chance of apparent hangs on media-heavy docs.
+- Remote parity still requires deploying this patch + restarting remote app process, then re-running DOCX upload checks.
+
+---
+
+## 34) Env-driven OCR guardrails + upload→object-storage lifecycle review (2026-02-26)
+
+### Request fulfilled
+- Added new environment variables to both `.env` and `.env.example` with inline comments describing:
+  - what each variable controls,
+  - how it affects processing time, OCR coverage, and ingestion stability.
+- Wired those variables into runtime settings and extraction pipeline so values are configurable without code changes.
+
+### New environment variables
+1. `DOC_SUBPROCESS_EXTRACT_TIMEOUT_S` (default `25`)
+   - Purpose: hard timeout for subprocess extractors (`textutil`, `antiword`, `strings`) in DOC/DOCX fallback paths.
+   - Impact:
+     - lower value => faster failure on problematic files, lower p95 upload latency;
+     - higher value => potentially more recovered text, but risk of long-running uploads.
+2. `EMBEDDED_OCR_MAX_IMAGES` (default `12`)
+   - Purpose: cap number of embedded images OCR-scanned in DOCX/PPTX archives.
+   - Impact:
+     - lower value => better throughput and predictability on media-heavy docs;
+     - higher value => better OCR recall but more CPU time per file.
+3. `EMBEDDED_OCR_MAX_TOTAL_BYTES` (default `20971520` / 20MB)
+   - Purpose: cap cumulative embedded-image payload OCR can process per DOCX/PPTX.
+   - Impact:
+     - lower value => stronger guardrail against memory/CPU spikes;
+     - higher value => more OCR completeness at increased latency/resource use.
+
+### Code wiring completed
+- `search-app/app/config.py`
+  - Added `Settings` fields:
+    - `doc_subprocess_extract_timeout_s`
+    - `embedded_ocr_max_images`
+    - `embedded_ocr_max_total_bytes`
+- `search-app/app/text_utils.py`
+  - Replaced hardcoded constants with `settings.*` values in:
+    - subprocess timeout calls for `.doc` + `.docx` fallback extraction;
+    - embedded-image OCR image-count and byte-cap checks.
+
+### Upload lifecycle review (user upload → object storage) and improvement opportunities
+Current flow (high-level):
+1. User uploads file to API.
+2. File is staged in local upload directory.
+3. Ingestion/extraction/chunking/OCR executes.
+4. Metadata/chunks are persisted.
+5. Depending on backend mode, file is synced to OCI/S3 object storage.
+
+Observed risk for large media-heavy OCR files:
+- synchronous upload request can hold open while OCR runs,
+- CPU-heavy OCR and DB writes can contend with web worker responsiveness,
+- object-store transfer and processing may compete for the same request time budget,
+- failures can be difficult to replay idempotently without explicit job state.
+
+Recommended improvements (priority ordered):
+1. **Split upload from processing via async job queue**
+   - API returns quickly with `job_id` after staging + minimal validation.
+   - Worker handles extraction/OCR/chunking/object-sync.
+   - Add `/api/jobs/{id}` status endpoint and UI polling.
+2. **Enforce staged guardrails before OCR**
+   - preflight checks on embedded media count/bytes;
+   - optionally skip/defers OCR for files above thresholds and mark partial-ingest reason.
+3. **Idempotent object-storage writes + resumable retry**
+   - deterministic object keying (hash or content-addressed),
+   - retry policy with backoff for object-store operations,
+   - avoid duplicate upload on worker retry by checking existing object metadata.
+4. **Separate processing and serving pools**
+   - keep API workers light; run OCR/extraction in dedicated worker processes/containers.
+5. **Progress telemetry + per-stage timings**
+   - record timings for: upload-receive, extract, OCR, chunk, DB write, object sync;
+   - expose p50/p95 and failure counters to tune these new env knobs empirically.
+6. **Partial-ingest policy for extreme files**
+   - ingest text layer first, defer OCR as optional second pass;
+   - preserve user-visible availability while heavy OCR completes asynchronously.
+
+### Practical tuning guidance
+- For latency-sensitive environments:
+  - reduce `DOC_SUBPROCESS_EXTRACT_TIMEOUT_S` (e.g., 10–15),
+  - reduce `EMBEDDED_OCR_MAX_IMAGES` (e.g., 6–10),
+  - reduce `EMBEDDED_OCR_MAX_TOTAL_BYTES` (e.g., 8–16MB).
+- For recall-sensitive/offline batch ingestion:
+  - increase image/byte caps gradually and monitor p95 ingest times + worker saturation.
+
+---
+
+## 35) Local + remote full validation rerun after env guardrail wiring (2026-02-26)
+
+### Scope executed
+- Re-ran the same full validation harnesses:
+  - local: `search-app/local_full_validation.sh`
+  - remote: `search-app/remote_full_validation.sh` (copied to remote host and executed there)
+- Target checks include:
+  - register/health/ready/kb/search-history
+  - upload PDF/image/DOCX
+  - search + image-search
+  - doc download + delete + post-delete download check
+
+### Local rerun result
+- Summary (`/tmp/local_full_validation/summary.json`):
+  - register/health/ready/kb/search_history: `200`
+  - upload_pdf/upload_img/upload_docx: `200/200/200`
+  - `docx_chunks: 18` (normal/healthy)
+  - search + image_search: `200/200`
+  - doc_download_pdf: `200`
+  - delete_pdf: `200`
+  - doc_download_pdf_after_delete: `404` (expected)
+
+### Remote rerun result
+- Summary (`/tmp/remote_full_validation/summary.json` on remote):
+  - register/health/ready/kb/search_history: `200`
+  - upload_pdf/upload_img: `200/200`
+  - upload_docx: empty/no final status captured (request did not complete within scripted flow)
+  - `docx_chunks: null`
+  - search + image_search: `200/200`
+  - doc_download_pdf: `200`
+  - delete_pdf: `200`
+  - doc_download_pdf_after_delete: `404` (expected)
+
+### Parity conclusion
+- Local remains stable and deterministic for DOCX ingestion.
+- Remote still shows DOCX instability/non-completion under the same validation flow.
+- Net: core API parity is good for health/PDF/image/search/download/delete, but **DOCX ingest parity remains unresolved on remote**.
 

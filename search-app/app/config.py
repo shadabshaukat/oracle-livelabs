@@ -122,6 +122,10 @@ class Settings:
     ocr_tesseract_cmd: Optional[str] = os.getenv("OCR_TESSERACT_CMD")
     ocr_min_chars: int = int(os.getenv("OCR_MIN_CHARS", "12"))
     ocr_max_chars: int = int(os.getenv("OCR_MAX_CHARS", "8000"))
+    # DOC/DOCX/PPTX extraction guardrails (latency control for media-heavy docs)
+    doc_subprocess_extract_timeout_s: int = int(os.getenv("DOC_SUBPROCESS_EXTRACT_TIMEOUT_S", "25"))
+    embedded_ocr_max_images: int = int(os.getenv("EMBEDDED_OCR_MAX_IMAGES", "12"))
+    embedded_ocr_max_total_bytes: int = int(os.getenv("EMBEDDED_OCR_MAX_TOTAL_BYTES", str(20 * 1024 * 1024)))
 
     # PDF image extraction
     pdf_image_extraction_enabled: bool = _get_bool("PDF_IMAGE_EXTRACTION", False)
