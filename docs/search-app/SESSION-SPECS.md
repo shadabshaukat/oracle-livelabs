@@ -255,6 +255,9 @@ Additional notes from this scan:
 - Image assets (including PDF page images) upload their **full image + thumbnail** to object storage when `STORAGE_BACKEND` is `oci`, `s3`, or `both`, and thumbnail endpoints fall back to object storage when local files are missing.
 - Delete flow removes document files **and** related image asset files from object storage when using `oci`/`s3`/`both`, ensuring consistent behavior across file types and nodes.
 - Document deletion removes DB records and deletes object-storage copies when the backend is `oci`/`s3`/`both`, while local file cleanup is best-effort on the node handling the delete.
+- Retrieval endpoints for `image_assets` now use the image asset’s own object key (`file_path` / `thumbnail_path`) as the single object-storage fallback path, avoiding extra object GET attempts via document-level object names.
+- Image thumbnail/object keys now include the relative dated upload path (not just basename), reducing cross-folder filename collision risk and keeping object-key mapping deterministic.
+- For directly uploaded images, source image object upload is skipped when the source already exists in object storage under the same object key (prevents redundant upload/write amplification).
 
 ### Multi-node consistency notes
 - **Source of truth**: Postgres + object storage (OCI/S3) when `STORAGE_BACKEND` is `oci`, `s3`, or `both`.
@@ -533,7 +536,9 @@ This session is now ready for targeted code and UI/UX change requests.
 ### PDF OCR fallback + image extraction
 - **Config flags** added: `OCR_PDF` and `PDF_IMAGE_EXTRACTION` (both documented in `.env`/`.env.example`).
 - `text_utils.py` now performs OCR fallback on PDFs when enabled, rasterizing pages via PyMuPDF and using the existing OCR pipeline.
-- `store.py` extracts per-page PDF images and ingests them into `image_assets` when enabled (writes JPEGs under `storage/uploads/pdf_pages/<pdf_stem>/`).
+- `store.py` extracts a **single first-page PDF image** (thumbnail) and ingests it into `image_assets` when enabled (writes a JPEG under `storage/uploads/pdf_pages/<pdf_stem>/`).
 - Document metadata includes `pdf_image_count` and `pdf_image_extraction_enabled`; Vision model unavailability is logged as a warning.
 - **Notes**: requires Tesseract installed for OCR; uses PyMuPDF for rendering (already in `pdf` extra).
+  - OCR still runs **per page** for text extraction; only the thumbnail upload is limited to the first page to avoid object-storage bloat.
+  - Object storage calls are minimized by avoiding duplicate source image uploads and by using a single deterministic image/thumbnail retrieval key path.
 

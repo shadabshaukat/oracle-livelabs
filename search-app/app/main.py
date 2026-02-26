@@ -769,7 +769,7 @@ async def api_image_thumbnail(request: Request, image_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ia.thumbnail_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket, d.thumbnail_object_name
+                SELECT ia.thumbnail_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket
                 FROM image_assets ia
                 JOIN documents d ON d.id = ia.document_id
                 WHERE ia.id = %s
@@ -779,21 +779,13 @@ async def api_image_thumbnail(request: Request, image_id: int):
             row = cur.fetchone()
     if not row:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    thumb_rel, _doc_id, owner_id, obj_provider, obj_bucket, thumb_object_name = row
+    thumb_rel, _doc_id, owner_id, obj_provider, obj_bucket = row
     if int(owner_id) != uid:
         return JSONResponse(status_code=404, content={"error": "not found"})
     path = _resolve_asset_path(thumb_rel)
     if path and path.exists():
         media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
         return FileResponse(str(path), media_type=media_type)
-    if obj_provider and obj_bucket and thumb_object_name:
-        try:
-            store = get_object_store(obj_provider)
-            if store:
-                stream, _length, content_type = store.get_object_stream(obj_bucket, thumb_object_name)
-                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
-        except Exception:
-            logger.exception("Failed to stream thumbnail from object storage: %s", thumb_object_name)
     if obj_provider and obj_bucket and thumb_rel:
         try:
             store = get_object_store(obj_provider)
@@ -815,7 +807,7 @@ async def api_image_asset(request: Request, image_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ia.file_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket, d.object_name
+                SELECT ia.file_path, ia.document_id, d.user_id, d.object_provider, d.object_bucket
                 FROM image_assets ia
                 JOIN documents d ON d.id = ia.document_id
                 WHERE ia.id = %s
@@ -825,21 +817,13 @@ async def api_image_asset(request: Request, image_id: int):
             row = cur.fetchone()
     if not row:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    file_rel, _doc_id, owner_id, obj_provider, obj_bucket, obj_name = row
+    file_rel, _doc_id, owner_id, obj_provider, obj_bucket = row
     if int(owner_id) != uid:
         return JSONResponse(status_code=404, content={"error": "not found"})
     path = _resolve_asset_path(file_rel)
     if path and path.exists():
         media_type = mimetypes.guess_type(str(path))[0] or "image/jpeg"
         return FileResponse(str(path), media_type=media_type)
-    if obj_provider and obj_bucket and obj_name:
-        try:
-            store = get_object_store(obj_provider)
-            if store:
-                stream, _length, content_type = store.get_object_stream(obj_bucket, obj_name)
-                return StreamingResponse(stream, media_type=content_type or "image/jpeg")
-        except Exception:
-            logger.exception("Failed to stream image asset from object storage: %s", obj_name)
     if obj_provider and obj_bucket and file_rel:
         try:
             store = get_object_store(obj_provider)

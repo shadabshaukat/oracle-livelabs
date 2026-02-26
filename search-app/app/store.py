@@ -400,19 +400,20 @@ def _process_image_asset(
     ready, detail = vision_dependencies_ready(preload_model=False)
     if not ready:
         raise VisionModelUnavailable(detail or "vision dependencies unavailable")
-    rel_file = str(_relative_upload_path(file_path))
+    rel_file_path = _relative_upload_path(file_path)
+    rel_file = str(rel_file_path).replace("\\", "/")
     with Image.open(file_path) as img:
         width, height = img.size
         rgb_img = img.convert("RGB")
-    thumb_dir = Path(settings.upload_dir) / "thumbnails"
+    thumb_dir = Path(settings.upload_dir) / "thumbnails" / rel_file_path.parent
     thumb_dir.mkdir(parents=True, exist_ok=True)
-    stem = Path(file_path).stem
+    stem = rel_file_path.stem
     thumb_path = thumb_dir / f"{stem}_thumb.jpg"
     thumb_img = rgb_img.copy()
     thumb_img.thumbnail((512, 512))
     thumb_img.save(thumb_path, format="JPEG", quality=80)
 
-    rel_thumb = str(_relative_upload_path(str(thumb_path)))
+    rel_thumb = str(_relative_upload_path(str(thumb_path))).replace("\\", "/")
     tags, caption = _derive_image_tags(thumb_img, file_path)
     try:
         generated_caption = generate_image_caption(file_path)
@@ -455,20 +456,30 @@ def _process_image_asset(
             provider = object_provider or resolve_object_provider()
             bucket = object_bucket or default_object_bucket(provider)
             if provider and bucket:
-                rel_file = str(_relative_upload_path(file_path)).replace("\\", "/")
+                rel_file_obj = str(_relative_upload_path(file_path)).replace("\\", "/")
                 rel_thumb_obj = str(_relative_upload_path(str(thumb_path))).replace("\\", "/")
-                with open(file_path, "rb") as fbytes:
-                    upload_object_bytes(bucket, rel_file, fbytes.read())
+                should_upload_source_image = True
+                if object_name and object_name.replace("\\", "/") == rel_file_obj:
+                    should_upload_source_image = False
+
+                if should_upload_source_image:
+                    with open(file_path, "rb") as fbytes:
+                        upload_object_bytes(bucket, rel_file_obj, fbytes.read())
                 with open(thumb_path, "rb") as tbytes:
                     upload_object_bytes(bucket, rel_thumb_obj, tbytes.read())
-                logger.info("Uploaded image asset + thumbnail to object storage: %s, %s", rel_file, rel_thumb_obj)
-                if object_name:
-                    thumb_object = str(Path(object_name).with_name(Path(object_name).stem + "_thumb.jpg"))
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE documents SET thumbnail_object_name = %s WHERE id = %s",
-                            (thumb_object, doc_id),
-                        )
+                logger.info(
+                    "Uploaded image asset objects to storage (source_uploaded=%s): %s, %s",
+                    should_upload_source_image,
+                    rel_file_obj,
+                    rel_thumb_obj,
+                )
+                with conn.cursor() as cur:
+                    # Keep thumbnail key aligned to the actual uploaded object path.
+                    thumb_object = rel_thumb_obj
+                    cur.execute(
+                        "UPDATE documents SET thumbnail_object_name = %s WHERE id = %s",
+                        (thumb_object, doc_id),
+                    )
         except Exception as exc:
             logger.warning("Failed to mirror thumbnail to object storage: %s", exc)
 
@@ -519,30 +530,33 @@ def _extract_pdf_page_images(
     except Exception as exc:
         logger.warning("PyMuPDF not available for PDF image extraction: %s", exc)
         return 0
-    out_dir = Path(settings.upload_dir) / "pdf_pages" / Path(file_path).stem
+    source_rel = _relative_upload_path(file_path)
+    source_stem = source_rel.with_suffix("")
+    out_dir = Path(settings.upload_dir) / "pdf_pages" / source_stem.parent / source_stem.name
     out_dir.mkdir(parents=True, exist_ok=True)
     count = 0
     with fitz.open(file_path) as doc:
-        for page_idx, page in enumerate(doc, start=1):
-            try:
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                img_path = out_dir / f"{Path(file_path).stem}_page_{page_idx}.jpg"
-                pix.save(str(img_path))
-                _process_image_asset(
-                    conn,
-                    doc_id,
-                    user_id,
-                    space_id,
-                    str(img_path),
-                    metadata,
-                    None,
-                    None,
-                    None,
-                )
-                count += 1
-            except VisionModelUnavailable:
-                raise
-            except Exception as exc:
-                logger.warning("Failed to extract PDF page %s image: %s", page_idx, exc)
-                continue
+        if doc.page_count < 1:
+            return 0
+        try:
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            img_path = out_dir / f"{Path(file_path).stem}_page_1.jpg"
+            pix.save(str(img_path))
+            _process_image_asset(
+                conn,
+                doc_id,
+                user_id,
+                space_id,
+                str(img_path),
+                metadata,
+                None,
+                None,
+                None,
+            )
+            count = 1
+        except VisionModelUnavailable:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to extract PDF page 1 image: %s", exc)
     return count
