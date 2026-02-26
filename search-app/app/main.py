@@ -538,12 +538,13 @@ async def api_search(request: Request, payload: Dict[str, Any]):
         # Include top references for UI (file name/type and chunk anchor)
         refs = []
         for e in hits_out[: min(len(hits_out), 5)]:
+            doc_id = e.get("document_id")
             refs.append({
                 "file_name": e.get("file_name") or e.get("title") or "",
                 "file_type": e.get("file_type") or "",
                 "chunk_id": e.get("chunk_id"),
                 "href": f"#chunk-{e.get('chunk_id')}",
-                "url": None,
+                "url": f"/api/doc-download?doc_id={doc_id}" if doc_id is not None else None,
             })
         out["references"] = refs
     if persistent_memory_enabled:
