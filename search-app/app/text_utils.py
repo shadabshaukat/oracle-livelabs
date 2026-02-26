@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Iterable
 import csv
 import json
+from tempfile import NamedTemporaryFile
 
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
@@ -208,6 +209,7 @@ def extract_text_from_pdf(path: str) -> str:
       2) pypdf: page.extract_text(); hyphenation fix; preserve paragraphs
       3) pdfplumber fallback for table/figure-heavy PDFs when pypdf output is sparse
     """
+    text_pymupdf = ""
     # Optional: use PyMuPDF if enabled and available for better extraction
     if getattr(settings, "use_pymupdf", False):
         try:
@@ -220,15 +222,14 @@ def extract_text_from_pdf(path: str) -> str:
                     pages_raw.append(t)
             # Remove common headers/footers
             pages_clean = _remove_common_headers_footers(pages_raw)
-            text = "\n\n".join(pages_clean)
-            text = _fix_hyphenation(text)
-            text = _normalize_whitespace_preserve_paragraphs(text)
+            text_pymupdf = "\n\n".join(pages_clean)
+            text_pymupdf = _fix_hyphenation(text_pymupdf)
+            text_pymupdf = _normalize_whitespace_preserve_paragraphs(text_pymupdf)
             # Insert heading boundaries to help chunking
-            text = _insert_heading_boundaries(text)
-            return text
+            text_pymupdf = _insert_heading_boundaries(text_pymupdf)
         except Exception:
             # Fall back to other extractors if PyMuPDF is not available or fails
-            pass
+            text_pymupdf = ""
 
     # pypdf extraction
     reader = PdfReader(path)
@@ -253,6 +254,7 @@ def extract_text_from_pdf(path: str) -> str:
 
     # Decide if we should try pdfplumber fallback (very sparse output or extremely short)
     needs_fallback = len(text_pypdf.strip()) < 200 or text_pypdf.count("\n") < max(2, len(texts_pypdf) // 4)
+    text_plumb = ""
     if needs_fallback:
         try:
             import pdfplumber  # type: ignore
@@ -269,14 +271,65 @@ def extract_text_from_pdf(path: str) -> str:
             text_plumb = _fix_hyphenation(text_plumb)
             text_plumb = _normalize_whitespace_preserve_paragraphs(text_plumb)
             text_plumb = _insert_heading_boundaries(text_plumb)
-            # Prefer the better (longer, more structured) output
-            if len(text_plumb.strip()) > len(text_pypdf.strip()):
-                return text_plumb
         except Exception:
             # If pdfplumber fails, keep pypdf output
-            pass
+            text_plumb = ""
 
-    return text_pypdf
+    # Choose best non-OCR text result
+    candidates = [t for t in [text_pymupdf, text_plumb, text_pypdf] if t and t.strip()]
+    best_text = max(candidates, key=lambda t: len(t.strip()), default="")
+
+    if settings.ocr_pdf_enabled:
+        try:
+            ocr_text = _ocr_pdf_pages(path)
+        except Exception as exc:
+            logger.warning("PDF OCR fallback failed for %s: %s", path, exc)
+            ocr_text = ""
+        if ocr_text:
+            combined = "\n\n".join([t for t in [best_text, ocr_text] if t and t.strip()])
+            combined = _normalize_whitespace_preserve_paragraphs(combined)
+            return combined
+
+    return best_text or text_pypdf
+
+
+def _ocr_pdf_pages(path: str) -> str:
+    """OCR PDF pages by rasterizing with PyMuPDF and running OCR per page."""
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:
+        logger.warning("PyMuPDF not available for PDF OCR: %s", exc)
+        return ""
+    try:
+        from .vision_embeddings import ocr_image_text, OcrUnavailable
+    except Exception as exc:
+        logger.warning("OCR pipeline unavailable: %s", exc)
+        return ""
+    texts: List[str] = []
+    with fitz.open(path) as doc:
+        for page_num, page in enumerate(doc, start=1):
+            try:
+                mat = fitz.Matrix(2, 2)
+                pix = page.get_pixmap(matrix=mat)
+                with NamedTemporaryFile(delete=False, suffix=f"_p{page_num}.png") as tmp:
+                    pix.save(tmp.name)
+                    tmp_path = tmp.name
+                try:
+                    text = ocr_image_text(tmp_path)
+                    if text:
+                        texts.append(text)
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+            except OcrUnavailable as exc:
+                logger.warning("OCR unavailable for PDF page %s: %s", page_num, exc)
+                break
+            except Exception as exc:
+                logger.warning("Failed OCR on PDF page %s: %s", page_num, exc)
+                continue
+    return "\n\n".join([t for t in texts if t and t.strip()])
 
 
 def extract_text_from_html(path: str) -> str:

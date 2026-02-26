@@ -1220,9 +1220,10 @@ async def api_search_history(
                        s.first_activity_at,
                        s.last_activity_at,
                        s.space_id,
-                       a.summary,
-                       a.activity_type,
-                       a.created_at
+                       last_act.summary,
+                       last_act.activity_type,
+                       last_act.created_at,
+                       COALESCE(activity_counts.activity_types, '{}'::jsonb)
                 FROM search_sessions s
                 LEFT JOIN LATERAL (
                     SELECT summary, activity_type, created_at
@@ -1231,18 +1232,31 @@ async def api_search_history(
                       AND user_id = %s
                     ORDER BY created_at DESC
                     LIMIT 1
-                ) a ON TRUE
+                ) last_act ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_object_agg(activity_type, cnt) AS activity_types
+                    FROM (
+                        SELECT activity_type, count(*) AS cnt
+                        FROM search_activity
+                        WHERE session_id = s.session_id
+                          AND user_id = %s
+                        GROUP BY activity_type
+                    ) agg
+                ) activity_counts ON TRUE
                 WHERE """
                 + where_clause
                 + """
                 ORDER BY s.last_activity_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                (uid, *params, limit, offset),
+                (uid, uid, *params, limit, offset),
             )
             rows = cur.fetchall()
     sessions = []
     for r in rows:
+        activity_map = r[8] or {}
+        if not isinstance(activity_map, dict):
+            activity_map = {}
         sessions.append(
             {
                 "session_id": r[0],
@@ -1253,6 +1267,7 @@ async def api_search_history(
                 "last_summary": r[5] or "",
                 "last_activity_type": r[6] or "",
                 "last_activity_at": r[7].isoformat() if r[7] else (r[3].isoformat() if r[3] else None),
+                "activity_types": activity_map,
             }
         )
     return {

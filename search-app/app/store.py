@@ -309,6 +309,27 @@ def ingest_file_path(
                     "UPDATE documents SET metadata = %s WHERE id = %s",
                     (json.dumps(doc_metadata), doc_id),
                 )
+        if settings.pdf_image_extraction_enabled and settings.enable_image_storage and source_type == "pdf":
+            try:
+                extracted = _extract_pdf_page_images(
+                    conn,
+                    doc_id,
+                    user_id,
+                    space_id,
+                    file_path,
+                    doc_metadata,
+                )
+                doc_metadata["pdf_image_count"] = extracted
+                doc_metadata["pdf_image_extraction_enabled"] = True
+            except VisionModelUnavailable as exc:
+                doc_metadata["pdf_image_warning"] = str(exc)
+            except Exception:
+                logger.exception("PDF image extraction failed for doc_id=%s", doc_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE documents SET metadata = %s WHERE id = %s",
+                    (json.dumps(doc_metadata), doc_id),
+                )
         if source_type != "image" and not chunks:
             doc_metadata["ingest_warning"] = "no_text_extracted"
             with conn.cursor() as cur:
@@ -475,3 +496,45 @@ def _process_image_asset(
             "image_height": height,
         }
     )
+
+
+def _extract_pdf_page_images(
+    conn: psycopg.Connection,
+    doc_id: int,
+    user_id: int,
+    space_id: Optional[int],
+    file_path: str,
+    metadata: Dict[str, Any],
+) -> int:
+    try:
+        import fitz  # PyMuPDF
+    except Exception as exc:
+        logger.warning("PyMuPDF not available for PDF image extraction: %s", exc)
+        return 0
+    out_dir = Path(settings.upload_dir) / "pdf_pages" / Path(file_path).stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with fitz.open(file_path) as doc:
+        for page_idx, page in enumerate(doc, start=1):
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                img_path = out_dir / f"{Path(file_path).stem}_page_{page_idx}.jpg"
+                pix.save(str(img_path))
+                _process_image_asset(
+                    conn,
+                    doc_id,
+                    user_id,
+                    space_id,
+                    str(img_path),
+                    metadata,
+                    None,
+                    None,
+                    None,
+                )
+                count += 1
+            except VisionModelUnavailable:
+                raise
+            except Exception as exc:
+                logger.warning("Failed to extract PDF page %s image: %s", page_idx, exc)
+                continue
+    return count

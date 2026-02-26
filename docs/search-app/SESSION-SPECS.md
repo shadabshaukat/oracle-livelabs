@@ -1,6 +1,6 @@
 # Search App Session Specs (Context-Recovery Document)
 
-Last updated: 2026-02-26 15:33 (AEDT)
+Last updated: 2026-02-26 19:07 (AEDT)
 Scope scanned: `/Users/shadab/Downloads/oracle-livelabs/search-app`
 
 ---
@@ -243,6 +243,15 @@ Most important env groups from `.env.example`:
 Additional notes from this scan:
 - `.env.example` includes OCR, image captioning, and persistent memory flags that materially affect UI feature toggles.
 - `LLM_PROVIDER` controls whether RAG answers are synthesized (OCI/OpenAI) or remain context-only.
+- `STORAGE_BACKEND` controls local vs object storage persistence (see storage behavior below).
+
+### Storage backend behavior (local vs object storage)
+- Uploads always write a **local file** for ingestion.
+- When `STORAGE_BACKEND=local`: files persist under `storage/uploads/...` and remain on disk.
+- When `STORAGE_BACKEND=oci` or `s3`: uploads are sent to object storage **and** written to a local **temp** path under `storage/tmp_uploads/...` for ingestion; the local temp file is used for parsing and can be removed if `DELETE_UPLOADED_FILES=true`.
+- When `STORAGE_BACKEND=both`: uploads are stored in object storage and **also** persisted locally under `storage/uploads/...`.
+- If extraction fails and an object reference exists, ingestion retries by downloading the object from storage and re-parsing.
+- PDF OCR fallback runs against the **local ingest file** (temp or persistent), so it follows the same storage backend behavior above and relies on the local copy created during upload.
 
 
 ---
@@ -415,3 +424,107 @@ This session is now ready for targeted code and UI/UX change requests.
 - Files:
   - `search-app/app/templates/index.html`
   - `search-app/app/static/style.css`
+
+---
+
+## 17) New change request (2026-02-26, this session)
+
+### Task 1: Search history multi-type tags + persistence checks
+- Current UI shows `session.last_activity_type` only (single badge in `index.html` -> history summary). This is why only the last search type tag appears.
+- `/api/search-history` returns only the last activity’s `activity_type`; it does **not** aggregate per-session activity types.
+- `/api/search-history/{session_id}` returns activity list with `activity_type` values for that session.
+- Logging is done via `_log_search_activity()` in `app/main.py`. Session IDs are based on signed cookies (invalidated on server restart). Sessions are persisted server-side in `search_sessions` and `search_activity` tables.
+- **Planned change**: update `/api/search-history` to include aggregated activity types for each session (unique types + count). Update UI to render all tags like `image_search × 3` in the session summary line.
+- **Persistence checks**: cookies persist across refresh; logout clears cookie; session is invalidated on server restart due to SERVER_START_TS. Deep Research stores conversation ID in localStorage per space. SQL context + memory toggles persist in localStorage.
+
+### Task 2: Image card hover modal + download + UI polish
+- Current image results are rendered in `index.html` under `doImageSearch()` with `.image-card` containing thumbnail, caption, tags+score.
+- Needs new UX:
+  - Hover (or tap) shows full-size image in a modal/popup.
+  - Download button appears in the card (similar to library download link).
+  - Score, caption, tags should get soft highlight “pill” styling with different colors.
+- Existing image endpoints: `/api/image-assets/{image_id}` for full image, `/api/doc-download` for doc download.
+- **Planned change**: update image card markup to include:
+  - Hoverable thumbnail that triggers modal with full-size image (`/api/image-assets/{image_id}` if available).
+  - Download link/button using `file_url` (already returned by API).
+  - Pill classes for caption/tags/score with distinct colors.
+
+### Upload button alignment
+- Upload section currently has a primary `Upload` button and a “Browse files” label styled as button.
+- **Planned change**: match Upload button text + size to “Browse files”, and make the animated border around upload button slightly thicker/brighter.
+
+### Mobile layout reset + Deep Research on mobile
+- CSS already has a mobile breakpoint at 720px and sets `.dr-modal` to full-screen mobile.
+- **Planned change**:
+  - Ensure after login on mobile, UI snaps to the mobile layout/stacking (no desktop toggles lingering).
+  - Deep Research modal should render like a form-driven mobile view (inputs, buttons, drawers) with improved sizing at mobile breakpoint.
+  - Add JS to force `window.scrollTo(0,0)` and reflow on login in mobile view.
+
+### Favicon + Apple Web App icon
+- No favicon or apple-touch icon is defined in `index.html` currently.
+- **Planned change**:
+  - Add `link rel="icon"` and `apple-touch-icon`.
+  - Create an SVG favicon and a 180x180 PNG (or SVG) apple touch icon in `app/static/`.
+
+---
+
+## 18) Change request status (2026-02-26, implemented)
+
+### ✅ Task 1: Search history multi-type tags + persistence
+- `/api/search-history` now aggregates activity types per session (`activity_types` json map) in `app/main.py`.
+- UI now renders all session activity badges with counts (e.g., `image_search × 3`).
+- Persistence notes unchanged: signed cookie persists across refresh; logout clears; restart invalidates via `SERVER_START_TS`.
+
+### ✅ Task 2: Image card download + pill styling (hover modal removed)
+- Image search cards updated in `app/templates/index.html` to use a simplified layout:
+  - inline thumbnail + caption + score/tag pills
+  - download link rendered under the tags
+- Hover modal preview removed per updated request.
+- CSS cleaned up to keep the simplified layout and pill styles.
+
+### ✅ Upload button alignment + border accent
+- Upload button now uses `.upload-btn` class to match Browse Files size/weight.
+- Upload-ready border is thicker/brighter via updated `::after` styling.
+
+### ✅ Mobile layout + Deep Research tweaks
+- JS adds `is-mobile` class and resets panels after login on mobile.
+- Mobile CSS tweaks for DR modal inputs/actions to render form-like stacks.
+
+### ✅ Favicon + Apple touch icon
+- Added `/static/favicon.svg` and `/static/apple-touch-icon.png`.
+- `index.html` now links both.
+
+---
+
+## 19) Latest change request (2026-02-26, in progress)
+
+### Task: Image cards word-cloud tags + uniform height + pinned download
+- User request: show only the top 10 tags in image search results, styled as a soft “word cloud”, keep all cards a uniform height, and pin the Download button to the bottom of each card. Also restyle the **Browse files** upload button to match a modern SaaS look and render well on mobile/desktop.
+- Implementation updates:
+  - `app/templates/index.html`: image search cards now slice tags to top 10 and render `tag-cloud` spans with size classes; download link is pinned via `.image-download--pinned`.
+  - `app/static/style.css`: added `.tag-cloud*` styles (soft highlight), set `.image-card` min height for uniform cards, and pinned download styling (margin-top: auto). Browse button refreshed with modern SaaS colors (light + dark mode + hover).
+- Dark mode variants added for the tag cloud styling.
+
+---
+
+## 20) Latest changes (2026-02-26, implemented)
+
+### UI/UX tweaks
+- **Home reset** now clears search history filters and library selections for a fresh start.
+- Image search cards: tag cloud + uniform card height + pinned download button.
+- Browse files button restyled to a SaaS-style look (desktop + mobile).
+- SQL memory rating label copy updated to **“Use these results again?”**.
+- SQL memory rating block moved beneath SQL output in the SQL panel.
+
+### Scripts/ops
+- `start.sh` includes a health check using `HEALTH_URL` (defaults to `/api/ready`).
+- `stop.sh` performs a graceful shutdown and SIGKILL fallback after timeout.
+- `run.sh` supports `SKIP_DEPS=true` to skip `uv sync`.
+
+### PDF OCR fallback + image extraction
+- **Config flags** added: `OCR_PDF` and `PDF_IMAGE_EXTRACTION` (both documented in `.env`/`.env.example`).
+- `text_utils.py` now performs OCR fallback on PDFs when enabled, rasterizing pages via PyMuPDF and using the existing OCR pipeline.
+- `store.py` extracts per-page PDF images and ingests them into `image_assets` when enabled (writes JPEGs under `storage/uploads/pdf_pages/<pdf_stem>/`).
+- Document metadata includes `pdf_image_count` and `pdf_image_extraction_enabled`; Vision model unavailability is logged as a warning.
+- **Notes**: requires Tesseract installed for OCR; uses PyMuPDF for rendering (already in `pdf` extra).
+

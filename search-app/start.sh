@@ -13,6 +13,7 @@ fi
 LOG_DIR="storage/logs"
 PID_FILE="storage/searchapp.pid"
 LOG_FILE="$LOG_DIR/searchapp.log"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/api/ready}"
 
 mkdir -p "$LOG_DIR"
 
@@ -30,3 +31,17 @@ PID=$!
 echo "$PID" > "$PID_FILE"
 
 echo "Search app started (PID $PID). Logs: $LOG_FILE"
+
+if command -v curl >/dev/null 2>&1; then
+  echo "Waiting for health check: $HEALTH_URL"
+  for _ in {1..20}; do
+    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+      echo "Search app is healthy."
+      exit 0
+    fi
+    sleep 0.5
+  done
+  echo "Warning: health check did not pass yet. Check logs: $LOG_FILE"
+else
+  echo "curl not found; skipping health check."
+fi

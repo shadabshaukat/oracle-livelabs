@@ -19,7 +19,17 @@ fi
 
 if kill -0 "$PID" 2>/dev/null; then
   kill "$PID"
-  echo "Stopped search app (PID $PID)."
+  echo "Stopping search app (PID $PID)..."
+  for _ in {1..20}; do
+    if ! kill -0 "$PID" 2>/dev/null; then
+      echo "Stopped search app (PID $PID)."
+      rm -f "$PID_FILE"
+      exit 0
+    fi
+    sleep 0.5
+  done
+  echo "Process $PID did not exit in time. Sending SIGKILL."
+  kill -9 "$PID" 2>/dev/null || true
 else
   echo "Process $PID not running. Removing stale PID file."
 fi

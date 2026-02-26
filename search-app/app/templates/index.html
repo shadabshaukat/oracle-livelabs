@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LiveLab Search App</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -282,7 +284,7 @@
         <label class="panel-title">LLM Response <span id="llmBadge" class="badge" style="display:none"></span><span id="llmTime" class="badge badge--time" style="display:none"></span></label>
         <div id="answer" class="panel answer-panel"></div>
         <div id="textMemoryRating" class="memory-rating" hidden>
-          <span class="muted small">Save in memory?</span>
+          <span class="muted small">Use these results again?</span>
           <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
           <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
           <span class="memory-rating-status muted small"></span>
@@ -300,7 +302,7 @@
         <label>Image Results</label>
         <div id="imageResults" class="image-results"></div>
         <div id="imageMemoryRating" class="memory-rating" hidden>
-          <span class="muted small">Save in memory?</span>
+          <span class="muted small">Use these results again?</span>
           <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
           <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
           <span class="memory-rating-status muted small"></span>
@@ -310,17 +312,17 @@
         <label class="panel-title">SQL Search <span id="sqlContextBadge" class="badge" style="display:none"></span><span id="sqlTime" class="badge badge--time" style="display:none"></span></label>
         <div class="panel sql-panel">
           <div id="sqlError" class="sql-error" hidden></div>
-          <div id="sqlMemoryRating" class="memory-rating" hidden>
-            <span class="muted small">Save in memory?</span>
-            <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
-            <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
-            <span class="memory-rating-status muted small"></span>
-          </div>
           <div class="sql-section">
             <div class="sql-header">
               <label class="muted small">Generated SQL</label>
             </div>
             <div id="sqlGenerated" class="sql-generated"></div>
+          </div>
+          <div id="sqlMemoryRating" class="memory-rating" hidden>
+            <span class="muted small">Use these results again?</span>
+            <button class="thumb-btn" data-rating="1" title="Thumbs up">👍</button>
+            <button class="thumb-btn" data-rating="-1" title="Thumbs down">👎</button>
+            <span class="memory-rating-status muted small"></span>
           </div>
         </div>
       </div>
@@ -343,7 +345,7 @@
           <div id="dropzone" class="dropzone">Drag & drop files here</div>
         </div>
         <div class="row wrap upload-actions-row">
-          <button id="uploadBtn" class="primary">Upload</button>
+          <button id="uploadBtn" class="primary upload-btn">Upload</button>
           <button id="uploadResetBtn" class="ghost" type="button">Clear</button>
           <div class="loader" id="uploadLoading" hidden>
             <div class="spinner small"></div>
@@ -527,6 +529,7 @@
     </div>
   </div>
 
+
   <div id="toast" class="toast" hidden></div>
 
   <script>
@@ -642,6 +645,32 @@
     function truncateText(text, maxChars) {
       if (!text) return '';
       return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+    }
+
+    function updateDeviceClass() {
+      const isMobile = window.innerWidth <= 720;
+      document.body.classList.toggle('is-mobile', isMobile);
+      return isMobile;
+    }
+
+    function resetMobilePanels() {
+      if (!updateDeviceClass()) return;
+      const panels = [
+        { toggle: 'uploadToggle', body: 'uploadBody' },
+        { toggle: 'libraryToggle', body: 'libraryBody' },
+        { toggle: 'historyToggle', body: 'historyBody' },
+        { toggle: 'historyFilterToggle', body: 'historyFilterBody' }
+      ];
+      panels.forEach(({ toggle, body }) => {
+        const toggleEl = document.getElementById(toggle);
+        const bodyEl = document.getElementById(body);
+        if (toggleEl && bodyEl) {
+          bodyEl.hidden = true;
+          toggleEl.setAttribute('aria-expanded', 'false');
+          toggleEl.classList.remove('is-open');
+        }
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function stringifyPayload(payload) {
@@ -1070,6 +1099,20 @@
           return;
         }
         list.innerHTML = '';
+        const buildActivityBadges = (activityMap, fallbackType) => {
+          if (!activityMap || typeof activityMap !== 'object') {
+            return fallbackType ? `<span class="badge">${escapeHtml(fallbackType)}</span>` : '';
+          }
+          const entries = Object.entries(activityMap).filter(([key]) => key);
+          if (!entries.length) {
+            return fallbackType ? `<span class="badge">${escapeHtml(fallbackType)}</span>` : '';
+          }
+          entries.sort((a, b) => Number(b[1]) - Number(a[1]));
+          return entries
+            .map(([key, count]) => `<span class="badge badge--activity">${escapeHtml(key)} × ${escapeHtml(String(count))}</span>`)
+            .join(' ');
+        };
+
         sessions.forEach((session) => {
           const details = document.createElement('details');
           details.className = 'history-item';
@@ -1078,6 +1121,7 @@
           const title = session.name || session.last_summary || 'Search session';
           const summary = document.createElement('summary');
           const spaceLabel = getSpaceLabel(session.space_id);
+          const activityBadges = buildActivityBadges(session.activity_types, session.last_activity_type);
           summary.innerHTML = `
             <div class="history-summary">
               <span class="history-title">${escapeHtml(truncateText(title, 80))}</span>
@@ -1086,7 +1130,7 @@
             <div class="history-sub">
               <span class="history-id">${escapeHtml(session.session_id)}</span>
               ${spaceLabel ? `<span class="badge">${escapeHtml(spaceLabel)}</span>` : ''}
-              ${session.last_activity_type ? `<span class="badge">${escapeHtml(session.last_activity_type)}</span>` : ''}
+              ${activityBadges}
             </div>
           `;
           details.appendChild(summary);
@@ -1341,6 +1385,7 @@
     let searchTimer = null;
     let searchMode = 'text';
     let state = { user: null, spaces: [], spaceId: null, role: 'user' };
+
 
     const drEls = {
       modal: document.getElementById('drModal'),
@@ -2736,12 +2781,61 @@
             || r.thumbnail_object_url
             || r.thumbnail_path
             || '';
-          const tagList = Array.isArray(r.tags) ? r.tags.join(', ') : '';
+          const tagArray = Array.isArray(r.tags)
+            ? r.tags.map(tag => String(tag).trim()).filter(Boolean)
+            : [];
+          const excludedTagTokens = [
+            'portrait',
+            'landscape',
+            'square',
+            'horizontal',
+            'vertical',
+            'png',
+            'jpg',
+            'jpeg',
+            'gif',
+            'webp',
+            'bmp'
+          ];
+          const filteredTags = tagArray.filter(tag => {
+            const normalized = tag.toLowerCase();
+            return !excludedTagTokens.some(token => normalized === token || normalized.endsWith(`.${token}`));
+          });
+          const topTags = filteredTags.slice(0, 10);
           const score = (r.score !== null && r.score !== undefined) ? `score: ${Number(r.score).toFixed(3)}` : '';
+          const downloadUrl = r.file_url || '';
+          const tagSizeClasses = [
+            'tag-cloud--xl',
+            'tag-cloud--lg',
+            'tag-cloud--md',
+            'tag-cloud--md',
+            'tag-cloud--sm',
+            'tag-cloud--sm',
+            'tag-cloud--xs',
+            'tag-cloud--xs',
+            'tag-cloud--xs',
+            'tag-cloud--xs'
+          ];
+          const tagsMarkup = topTags.length
+            ? `<div class="tag-cloud">${topTags.map((tag, idx) => {
+                const sizeClass = tagSizeClasses[idx] || 'tag-cloud--sm';
+                return `<span class="tag-cloud-item ${sizeClass}">${escapeHtml(tag)}</span>`;
+              }).join('')}</div>`
+            : '<span class="muted small">No tags</span>';
           card.innerHTML = `
-            <div class="image-thumb">${thumb ? `<img src="${thumb}" alt="thumb" loading="lazy" />` : '<div class="image-thumb__empty">No preview</div>'}</div>
-            <div class="image-caption">${escapeHtml(r.caption || 'Image')}</div>
-            <div class="image-meta">${escapeHtml(tagList)}${score ? ` · ${score}` : ''}</div>
+            <div class="image-thumb">
+              ${thumb ? `<img src="${thumb}" alt="thumb" loading="lazy" />` : '<div class="image-thumb__empty">No preview</div>'}
+            </div>
+            <div class="image-body">
+              <div class="image-caption">${escapeHtml(r.caption || 'Image')}</div>
+              <div class="image-meta">
+                ${tagsMarkup}
+              </div>
+            </div>
+            <div class="image-footer">
+              ${downloadUrl ? `<a class="image-download image-download--pinned" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download</a>` : ''}
+              ${score ? `<span class="image-pill image-pill--score image-pill--score-pinned">${escapeHtml(score)}</span>` : ''}
+            </div>
           `;
           imageResults.appendChild(card);
         });
@@ -2837,6 +2931,7 @@
         document.getElementById('userEmail').textContent = `${state.user.email || ''} (${state.role})`;
         populateHistorySpaceFilter();
         loadSearchHistory();
+        resetMobilePanels();
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
@@ -3055,6 +3150,44 @@
     });
     document.getElementById('homeBtn').addEventListener('click', () => {
       drCloseModal();
+      drCloseFollowupModal();
+      drToggleMenu(false);
+      const settingsPanel = document.getElementById('settingsPanel');
+      if (settingsPanel) settingsPanel.hidden = true;
+      const settingsBtn = document.getElementById('settingsBtn');
+      settingsBtn?.setAttribute('aria-expanded', 'false');
+      const homePanels = [
+        { toggle: 'uploadToggle', body: 'uploadBody' },
+        { toggle: 'libraryToggle', body: 'libraryBody' },
+        { toggle: 'historyToggle', body: 'historyBody' },
+        { toggle: 'historyFilterToggle', body: 'historyFilterBody' }
+      ];
+      homePanels.forEach(({ toggle, body }) => {
+        const toggleEl = document.getElementById(toggle);
+        const bodyEl = document.getElementById(body);
+        if (toggleEl && bodyEl) {
+          bodyEl.hidden = true;
+          toggleEl.setAttribute('aria-expanded', 'false');
+          toggleEl.classList.remove('is-open');
+        }
+      });
+      const queryEl = document.getElementById('query');
+      const imageTagsEl = document.getElementById('imageTags');
+      const imageFileEl = document.getElementById('imageFile');
+      if (queryEl) queryEl.value = '';
+      if (imageTagsEl) imageTagsEl.value = '';
+      if (imageFileEl) imageFileEl.value = '';
+      clearTextResults();
+      clearImageResults();
+      clearSqlResults();
+      resetUploadPanel();
+      resetHistoryFilters();
+      if (state.user) {
+        loadSearchHistory();
+      }
+      selectedDocs.clear();
+      syncLibraryCheckboxes();
+      updateLibrarySelectionUI();
       const acc = document.getElementById('accountSection');
       const landing = document.getElementById('landingSection');
       const search = document.getElementById('searchSection');
@@ -3296,6 +3429,8 @@
     });
 
     window.addEventListener('DOMContentLoaded', () => {
+      updateDeviceClass();
+      window.addEventListener('resize', updateDeviceClass);
       initUser();
       loadDeepResearchConfig();
       const storedContext = localStorage.getItem('sqlContext') || 'user';
@@ -3400,6 +3535,7 @@
       bindSqlCopyButtons();
     });
     sqlObserver.observe(document.getElementById('sqlGenerated'), { childList: true, subtree: true });
+
   </script>
 </body>
 </html>
