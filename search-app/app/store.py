@@ -396,6 +396,7 @@ def _process_image_asset(
     object_provider: Optional[str],
     object_bucket: Optional[str],
     object_name: Optional[str],
+    perform_ocr: bool = True,
 ) -> None:
     ready, detail = vision_dependencies_ready(preload_model=False)
     if not ready:
@@ -426,7 +427,7 @@ def _process_image_asset(
         logger.exception("Image captioning failed for %s", file_path)
 
     ocr_text = ""
-    if settings.ocr_enabled:
+    if settings.ocr_enabled and perform_ocr:
         try:
             ocr_text = ocr_image_text(file_path)
             if ocr_text:
@@ -553,6 +554,7 @@ def _extract_pdf_page_images(
                 None,
                 None,
                 None,
+                perform_ocr=False,
             )
             count = 1
         except VisionModelUnavailable:

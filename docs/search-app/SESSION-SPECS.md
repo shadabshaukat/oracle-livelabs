@@ -541,4 +541,48 @@ This session is now ready for targeted code and UI/UX change requests.
 - **Notes**: requires Tesseract installed for OCR; uses PyMuPDF for rendering (already in `pdf` extra).
   - OCR still runs **per page** for text extraction; only the thumbnail upload is limited to the first page to avoid object-storage bloat.
   - Object storage calls are minimized by avoiding duplicate source image uploads and by using a single deterministic image/thumbnail retrieval key path.
+  - PDF thumbnail generation path does **not** run an extra OCR pass (to avoid duplicate OCR warnings/cost); OCR is handled in the PDF text extraction pipeline.
+
+---
+
+## 21) Session/search history audit + fixes (2026-02-26, completed)
+
+### Scope
+- Reviewed and finalized the active request to verify session history/activity correctness and fill gaps in search history behavior.
+- Focus files:
+  - `search-app/app/main.py`
+  - `search-app/app/templates/index.html`
+
+### Backend fixes confirmed in `app/main.py`
+- **Activity space consistency fix** in `_log_search_activity(...)`:
+  - `search_activity.space_id` now uses `session_space_id` (resolved default-aware value), not the raw incoming `space_id`.
+  - Prevents null/mismatched space attribution when callers omit `space_id` and fallback default space is used.
+- **Search history list filtering control** in `GET /api/search-history`:
+  - Added query parameter `include_empty: bool = False`.
+  - Default behavior now excludes sessions with no activity rows (unless `include_empty=true`).
+- **Session-level activity totals** in `GET /api/search-history`:
+  - Added aggregated `activity_count` and `activity_types` map per session.
+  - Response filters now echo `include_empty`.
+- **Detail pagination completeness** in `GET /api/search-history/{session_id}`:
+  - Added `total` count and `has_more` boolean for robust UI incremental loading.
+
+### Frontend fix completed in `app/templates/index.html`
+- Repaired malformed JS in `loadSessionActivities` (introduced by prior fuzzy patch collision).
+- Restored proper `try/catch` block integrity and conditional guards.
+- Finalized load-more + status behavior:
+  - `loadMoreBtn.hidden = !Boolean(detail?.has_more)` (guarded)
+  - status text shows `Loaded X of Y` using backend `total`
+
+### Validation performed
+- Python compile check:
+  - `python3 -m py_compile search-app/app/main.py` ✅
+- Targeted frontend logic sanity check (scripted file inspection):
+  - `loadSearchHistory` block present ✅
+  - `detail?.has_more` usage present ✅
+  - `Loaded ${loaded} of ${total}` status string present ✅
+  - try/catch marker counts balanced for edited block ✅
+
+### Result
+- Session activity logging, list/detail API contracts, and UI history expansion/load-more flow are now aligned.
+- The previously broken history JS section is repaired and no longer syntactically malformed.
 

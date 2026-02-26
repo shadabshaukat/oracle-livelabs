@@ -245,7 +245,7 @@ def _log_search_activity(
                     (
                         session_id,
                         uid,
-                        space_id,
+                        session_space_id,
                         activity_type,
                         _json_dumps(request_payload or {}),
                         _json_dumps(response_payload or {}),
@@ -1218,6 +1218,7 @@ async def api_search_history(
     space_id: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    include_empty: bool = False,
 ):
     user = await get_current_user(request)
     if not user:
@@ -1227,12 +1228,34 @@ async def api_search_history(
     offset = max(0, int(offset))
     filters: List[str] = ["s.user_id = %s"]
     params: List[Any] = [uid]
+    if not include_empty:
+        filters.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM search_activity sa_any
+                WHERE sa_any.session_id = s.session_id
+                  AND sa_any.user_id = %s
+            )
+            """
+        )
+        params.append(uid)
     if space_id is not None:
         filters.append("s.space_id = %s")
         params.append(int(space_id))
     if activity_type:
-        filters.append("a.activity_type = %s")
-        params.append(activity_type)
+        filters.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM search_activity sa_filter
+                WHERE sa_filter.session_id = s.session_id
+                  AND sa_filter.user_id = %s
+                  AND sa_filter.activity_type = %s
+            )
+            """
+        )
+        params.extend([uid, activity_type])
     if since:
         filters.append("s.last_activity_at >= %s")
         params.append(since)
@@ -1243,6 +1266,11 @@ async def api_search_history(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
+                "SELECT COUNT(*) FROM search_sessions s WHERE " + where_clause,
+                tuple(params),
+            )
+            total = int(cur.fetchone()[0])
+            cur.execute(
                 """
                 SELECT s.session_id,
                        s.name,
@@ -1252,6 +1280,7 @@ async def api_search_history(
                        last_act.summary,
                        last_act.activity_type,
                        last_act.created_at,
+                       COALESCE(activity_counts.activity_count, 0),
                        COALESCE(activity_counts.activity_types, '{}'::jsonb)
                 FROM search_sessions s
                 LEFT JOIN LATERAL (
@@ -1263,7 +1292,8 @@ async def api_search_history(
                     LIMIT 1
                 ) last_act ON TRUE
                 LEFT JOIN LATERAL (
-                    SELECT jsonb_object_agg(activity_type, cnt) AS activity_types
+                    SELECT COALESCE(sum(cnt), 0) AS activity_count,
+                           jsonb_object_agg(activity_type, cnt) AS activity_types
                     FROM (
                         SELECT activity_type, count(*) AS cnt
                         FROM search_activity
@@ -1283,7 +1313,8 @@ async def api_search_history(
             rows = cur.fetchall()
     sessions = []
     for r in rows:
-        activity_map = r[8] or {}
+        activity_count = int(r[8] or 0)
+        activity_map = r[9] or {}
         if not isinstance(activity_map, dict):
             activity_map = {}
         sessions.append(
@@ -1296,11 +1327,13 @@ async def api_search_history(
                 "last_summary": r[5] or "",
                 "last_activity_type": r[6] or "",
                 "last_activity_at": r[7].isoformat() if r[7] else (r[3].isoformat() if r[3] else None),
+                "activity_count": activity_count,
                 "activity_types": activity_map,
             }
         )
     return {
         "sessions": sessions,
+        "total": total,
         "limit": limit,
         "offset": offset,
         "filters": {
@@ -1308,6 +1341,7 @@ async def api_search_history(
             "space_id": space_id,
             "since": since,
             "until": until,
+            "include_empty": bool(include_empty),
         },
     }
 
@@ -1346,6 +1380,11 @@ async def api_search_history_detail(
                 params.append(activity_type)
             where_clause = " AND ".join(activity_filters)
             cur.execute(
+                "SELECT COUNT(*) FROM search_activity WHERE " + where_clause,
+                tuple(params),
+            )
+            total = int(cur.fetchone()[0])
+            cur.execute(
                 """
                 SELECT id, activity_type, summary, request_payload, response_payload, created_at, client_ip, user_agent
                 FROM search_activity
@@ -1383,8 +1422,10 @@ async def api_search_history_detail(
             "last_user_agent": session_row[6] or "",
         },
         "activities": items,
+        "total": total,
         "limit": limit,
         "offset": offset,
+        "has_more": (offset + len(items)) < total,
         "filters": {"activity_type": activity_type or ""},
     }
 
