@@ -252,6 +252,15 @@ Additional notes from this scan:
 - When `STORAGE_BACKEND=both`: uploads are stored in object storage and **also** persisted locally under `storage/uploads/...`.
 - If extraction fails and an object reference exists, ingestion retries by downloading the object from storage and re-parsing.
 - PDF OCR fallback runs against the **local ingest file** (temp or persistent), so it follows the same storage backend behavior above and relies on the local copy created during upload.
+- Image assets (including PDF page images) upload their **full image + thumbnail** to object storage when `STORAGE_BACKEND` is `oci`, `s3`, or `both`, and thumbnail endpoints fall back to object storage when local files are missing.
+- Delete flow removes document files **and** related image asset files from object storage when using `oci`/`s3`/`both`, ensuring consistent behavior across file types and nodes.
+- Document deletion removes DB records and deletes object-storage copies when the backend is `oci`/`s3`/`both`, while local file cleanup is best-effort on the node handling the delete.
+
+### Multi-node consistency notes
+- **Source of truth**: Postgres + object storage (OCI/S3) when `STORAGE_BACKEND` is `oci`, `s3`, or `both`.
+- **Uploads**: always write a local ingest copy; object storage receives the source file and image assets/thumbnails so any node can serve downloads/thumbnails.
+- **Downloads/Thumbnails**: endpoints first try local paths, then fall back to object storage for images, thumbnails, and document files.
+- **Deletes**: remove DB records and delete object storage objects (source file + thumbnails + image assets) for `oci`/`s3`/`both`; local node cleanup is best-effort.
 
 
 ---
