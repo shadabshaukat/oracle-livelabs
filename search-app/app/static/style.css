@@ -344,6 +344,24 @@ button:hover { filter: brightness(0.98); }
 .results { display: grid; grid-template-columns: 1fr; gap: 12px; width: 100%; }
 .library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; width: 100%; }
 .library-list { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+#uploadBody,
+#libraryBody {
+  min-width: 0;
+}
+#uploadBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#libraryBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#uploadList,
+#libraryList {
+  min-width: 0;
+}
 .file-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
 .file-card--list { flex-direction: row; align-items: center; gap: 12px; }
 .file-card--list .file-icon { font-size: 20px; }
@@ -1217,6 +1235,23 @@ textarea:focus-visible {
   }
   .dropzone-subtext {
     font-size: 10px;
+  }
+  #uploadBody,
+  #libraryBody {
+    max-height: min(62dvh, 640px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+  }
+  #uploadList,
+  #libraryList {
+    max-height: min(48dvh, 520px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .sql-block-header { flex-direction: column; align-items: flex-start; }
   .sql-copy-btn { width: 100%; }
