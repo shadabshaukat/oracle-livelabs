@@ -1281,3 +1281,49 @@ Now go go go
 - On desktop, existing layout model remains intact.
 - Dark mode now has stronger consistency across DR, history, panels, and settings.
 
+---
+
+## 40) iOS post-login mobile render enforcement (2026-02-27, completed)
+
+### User feedback addressed
+- On iOS/mobile, after login the app should immediately render in proper mobile scale/layout (no manual zoom-out required).
+
+### Files updated
+- `search-app/app/templates/index.html`
+- `search-app/app/static/style.css`
+
+### Implementation details
+- Added `applyMobileRenderMode()` in client JS:
+  - re-applies mobile detection,
+  - forces scroll reset to top,
+  - normalizes viewport meta to `width=device-width, initial-scale=1, viewport-fit=cover` when in mobile mode.
+- Hooked mobile render enforcement at key lifecycle points:
+  - on `DOMContentLoaded`,
+  - on `resize`,
+  - after successful `login` and `register`,
+  - when authenticated account view is rendered.
+- Added mobile font-size guardrails to prevent iOS input auto-zoom:
+  - `input`, `select`, `textarea`, and `.auth-card input` set to `16px` under mobile breakpoint.
+
+### Effective result
+- After login/register on iOS/mobile, the interface now snaps to mobile layout/scale automatically.
+- Reduced likelihood of Safari auto-zoom behavior on form focus.
+
+---
+
+## 41) Account panel logout button visual alignment (2026-02-27, completed)
+
+### Request implemented
+- Update the **Logout** button in the Account panel so it matches the same visual treatment as primary action buttons (e.g., Search and Upload).
+
+### File updated
+- `search-app/app/templates/index.html`
+
+### Change applied
+- In `#accountPanel`, changed:
+  - `<button id="logoutBtn" class="ghost">Logout</button>`
+  - to `<button id="logoutBtn" class="primary">Logout</button>`
+
+### Effective result
+- Logout now uses the same primary background + text styling as Search and Upload for consistent CTA visual language.
+
