@@ -437,7 +437,7 @@
             </div>
           </div>
         </div>
-        <button id="drClose" class="ghost" title="Close">✕</button>
+        <button id="drClose" class="primary" title="Close">✕</button>
       </div>
     </div>
     <div class="dr-main">
@@ -656,13 +656,16 @@
       return isMobile;
     }
 
-    function applyMobileRenderMode() {
+    function applyResponsiveRenderMode() {
       const isMobile = updateDeviceClass();
-      if (!isMobile) return;
-      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
       const viewport = document.querySelector('meta[name="viewport"]');
       if (viewport) {
-        viewport.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+        viewport.setAttribute('content', isMobile
+          ? 'width=device-width, initial-scale=1, viewport-fit=cover'
+          : 'width=device-width, initial-scale=1');
+      }
+      if (isMobile) {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
       }
     }
 
@@ -1990,10 +1993,12 @@
         return;
       }
       if (!drEls.modal || !drEls.backdrop) return;
+      applyResponsiveRenderMode();
       drEls.backdrop.hidden = false;
       drEls.backdrop.classList.add('open');
       drEls.modal.hidden = false;
       drEls.modal.classList.add('open');
+      applyResponsiveRenderMode();
       document.body.classList.add('dr-open');
       if (drEls.forceWeb && typeof drEls.forceWeb.checked === 'boolean') {
         const storedForceWeb = localStorage.getItem('drForceWeb');
@@ -2976,7 +2981,7 @@
         populateHistorySpaceFilter();
         loadSearchHistory();
         resetMobilePanels();
-        applyMobileRenderMode();
+        applyResponsiveRenderMode();
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
@@ -3312,7 +3317,7 @@
       try {
         await api('/api/login', { method: 'POST', body: { email, password } });
         await initUser();
-        applyMobileRenderMode();
+        applyResponsiveRenderMode();
         showToast('Logged in');
       } catch { showToast('Login failed'); }
     });
@@ -3322,7 +3327,7 @@
       try {
         await api('/api/register', { method: 'POST', body: { email, password } });
         await initUser();
-        applyMobileRenderMode();
+        applyResponsiveRenderMode();
         showToast('Registered');
       } catch { showToast('Registration failed'); }
     });
@@ -3477,8 +3482,8 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       updateDeviceClass();
-      applyMobileRenderMode();
-      window.addEventListener('resize', applyMobileRenderMode);
+      applyResponsiveRenderMode();
+      window.addEventListener('resize', applyResponsiveRenderMode);
       initUser();
       loadDeepResearchConfig();
       const storedContext = localStorage.getItem('sqlContext') || 'user';
