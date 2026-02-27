@@ -2,10 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2f6db5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="LiveLab Search" />
   <title>LiveLab Search App</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link rel="manifest" href="/static/manifest.webmanifest" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -656,17 +661,36 @@
       return isMobile;
     }
 
-    function applyResponsiveRenderMode() {
-      const isMobile = updateDeviceClass();
+    const STABLE_VIEWPORT_CONTENT = 'width=device-width, initial-scale=1, viewport-fit=cover';
+    let responsiveRenderRaf = null;
+
+    function ensureStableViewport() {
       const viewport = document.querySelector('meta[name="viewport"]');
-      if (viewport) {
-        viewport.setAttribute('content', isMobile
-          ? 'width=device-width, initial-scale=1, viewport-fit=cover'
-          : 'width=device-width, initial-scale=1');
+      if (viewport && viewport.getAttribute('content') !== STABLE_VIEWPORT_CONTENT) {
+        viewport.setAttribute('content', STABLE_VIEWPORT_CONTENT);
       }
-      if (isMobile) {
-        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+
+    function applyResponsiveRenderMode({ enforceTop = false } = {}) {
+      const isMobile = updateDeviceClass();
+      ensureStableViewport();
+      const isTouch = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+      document.body.classList.toggle('is-touch', isTouch);
+      if (isMobile && enforceTop) {
+        window.requestAnimationFrame(() => {
+          window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        });
       }
+    }
+
+    function scheduleResponsiveRender() {
+      if (responsiveRenderRaf != null) {
+        window.cancelAnimationFrame(responsiveRenderRaf);
+      }
+      responsiveRenderRaf = window.requestAnimationFrame(() => {
+        applyResponsiveRenderMode();
+        responsiveRenderRaf = null;
+      });
     }
 
     function resetMobilePanels() {
@@ -1993,7 +2017,7 @@
         return;
       }
       if (!drEls.modal || !drEls.backdrop) return;
-      applyResponsiveRenderMode();
+      applyResponsiveRenderMode({ enforceTop: true });
       drEls.backdrop.hidden = false;
       drEls.backdrop.classList.add('open');
       drEls.modal.hidden = false;
@@ -2981,7 +3005,7 @@
         populateHistorySpaceFilter();
         loadSearchHistory();
         resetMobilePanels();
-        applyResponsiveRenderMode();
+        applyResponsiveRenderMode({ enforceTop: true });
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
@@ -3317,7 +3341,7 @@
       try {
         await api('/api/login', { method: 'POST', body: { email, password } });
         await initUser();
-        applyResponsiveRenderMode();
+        applyResponsiveRenderMode({ enforceTop: true });
         showToast('Logged in');
       } catch { showToast('Login failed'); }
     });
@@ -3327,7 +3351,7 @@
       try {
         await api('/api/register', { method: 'POST', body: { email, password } });
         await initUser();
-        applyResponsiveRenderMode();
+        applyResponsiveRenderMode({ enforceTop: true });
         showToast('Registered');
       } catch { showToast('Registration failed'); }
     });
@@ -3482,8 +3506,12 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       updateDeviceClass();
-      applyResponsiveRenderMode();
-      window.addEventListener('resize', applyResponsiveRenderMode);
+      applyResponsiveRenderMode({ enforceTop: true });
+      window.addEventListener('resize', scheduleResponsiveRender);
+      window.addEventListener('orientationchange', scheduleResponsiveRender);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleResponsiveRender);
+      }
       initUser();
       loadDeepResearchConfig();
       const storedContext = localStorage.getItem('sqlContext') || 'user';

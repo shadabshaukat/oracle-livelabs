@@ -1416,3 +1416,243 @@ Now go go go
   - composer readability/interaction,
   - follow-up dialog sizing and touch ergonomics.
 
+---
+
+## 44) iOS Safari upload/library clipping stabilization + responsive groundwork (2026-02-28, completed)
+
+### Request context
+- User reported **Upload** and **Library** sections clipping/locking on Safari iOS (latest), after prior browser-based resize logic updates.
+- User also requested this session be fully captured for context-window recovery and asked to prepare for a broader modern SaaS-style UI/UX overhaul (future iOS app trajectory).
+
+### Scope executed in this session
+1. Re-scanned current frontend surfaces (`index.html`, `style.css`, `manifest.webmanifest`) and existing session specs.
+2. Implemented iOS-focused viewport/render stability fixes with safer responsive event handling.
+3. Hardened Upload/Library layout overflow behavior and Safari compositor behavior.
+4. Standardized button sizing primitives for improved mobile ergonomics and consistency.
+5. Documented all changes in this spec section.
+
+### Files updated
+- `search-app/app/templates/index.html`
+- `search-app/app/static/style.css`
+
+### Implementation details
+
+#### A) Viewport/render-mode stabilization (`index.html`)
+- Updated initial viewport meta to include `viewport-fit=cover`.
+- Added stable viewport controller:
+  - `STABLE_VIEWPORT_CONTENT = 'width=device-width, initial-scale=1, viewport-fit=cover'`
+  - `ensureStableViewport()` to prevent oscillating viewport content updates.
+- Refactored responsive logic:
+  - `applyResponsiveRenderMode({ enforceTop = false })`
+  - `scheduleResponsiveRender()` using `requestAnimationFrame` to avoid resize thrash.
+- Added robust listeners for reflow-sensitive environments:
+  - `window.resize`
+  - `window.orientationchange`
+  - `visualViewport.resize` (when available)
+- Added touch capability class toggle (`body.is-touch`) for future responsive branching.
+- Enforced top reset on key mobile transitions (login/register/auth render) using `{ enforceTop: true }`.
+
+#### B) Upload/Library clipping hardening (`style.css`)
+- Added shared containment guards to prevent width overflow and clipping side-effects:
+  - `.container, .card, #uploadSection, #librarySection, #uploadBody, #libraryBody, #uploadList, #libraryList { min-width: 0; overflow: visible; }`
+- Added iOS Safari-specific compositor hint block:
+  - `@supports (-webkit-touch-callout: none)` with `translateZ(0)` + `backface-visibility: hidden` on upload/library wrappers.
+- Mobile containment enhancement:
+  - under `@media (max-width: 720px)`, upload/library wrappers now include `contain: layout style`.
+
+#### C) Safe-area/PWA alignment (`style.css`)
+- Top bar now respects notch/safe area:
+  - `padding-top: max(6px, env(safe-area-inset-top));`
+- Mobile padding now respects left/right/bottom safe insets:
+  - `.container` mobile padding uses `env(safe-area-inset-left/right/bottom)`.
+- Mobile topbar padding updated to use safe-area aware left/right/top values.
+
+#### D) Button-system consistency groundwork (`style.css`)
+- Introduced design tokens:
+  - `--btn-height`, `--btn-height-mobile`, `--btn-font`, radius vars.
+- Unified core button baseline:
+  - stronger min-height, weight, and `touch-action: manipulation`.
+- Normalized Upload/Browse button sizing to the shared button tokens.
+- Mobile breakpoint now enforces larger tap targets uniformly for key button classes.
+
+### Regression cleanup performed
+- Removed duplicate `.upload-btn` definition created during iterative patching.
+- Merged duplicate `.topbar` block into a single authoritative definition.
+- Updated register flow to use enforced top-reset responsive call for parity with login.
+
+### Expected behavioral outcome
+- Safari iOS should no longer get viewport-meta flip states that can cause clipping/locking behavior after auth or orientation changes.
+- Upload and Library sections should render with safer containment and less compositor-induced clipping risk.
+- Mobile CTA/tap targets are more uniform and app-like, while preserving existing design language.
+
+### Next recommended implementation phase (as requested by user)
+- Execute a dedicated **UI/UX modernization phase** (without breaking current IA):
+  1. Define a compact design system (type scale, spacing, radius, elevation, button tiers).
+  2. Split monolithic `index.html` behaviors into modular JS (or progressive components).
+  3. Introduce section-level layout primitives for Search/Upload/Library consistency.
+  4. Add iOS-first interaction polish (sheet patterns, momentum-safe lists, gesture-safe drawers).
+  5. Add app-shell PWA behavior tuning (installability QA, status-bar modes, startup transitions).
+
+---
+
+## 45) Modern SaaS visual polish pass (phase continuation) (2026-02-28, completed)
+
+### Request context
+- Continue from completed Safari clipping stabilization and push the next visual layer toward a cleaner modern SaaS look while preserving existing functionality and iOS-safe behavior.
+- Keep changes low-risk and CSS-focused (no feature logic rewrites).
+
+### Files updated
+- `search-app/app/static/style.css`
+
+### Changes implemented
+
+#### A) Design-token expansion for scalable UI system
+- Extended `:root` with additional visual tokens:
+  - `--radius-xl`
+  - `--surface-0/1/2`
+  - `--text-strong`, `--text-muted`
+  - `--border-soft`
+  - `--shadow-soft`, `--shadow-card`
+  - `--brand`
+- Purpose: establish a consistent styling baseline for current and future UI modernization passes.
+
+#### B) App-shell and card surface refinement
+- Updated page background to a subtle radial gradient for depth while keeping readability high.
+- Increased container max width (`1100px` -> `1160px`) for a more balanced desktop layout.
+- Upgraded card styling:
+  - soft gradient fill,
+  - larger radius via `--radius-xl`,
+  - modern shadow + soft border.
+
+#### C) Top bar visual polish
+- Strengthened topbar overlay gradient and blur treatment (`backdrop-filter`),
+- adjusted spacing/border transparency for a cleaner, app-shell look,
+- retained safe-area behavior for iOS notch devices.
+
+#### D) CTA/button system refinement
+- Added smoother button transitions (`transform`, `shadow`, `border/background` transitions).
+- Promoted primary button to tokenized brand usage and added elevated shadow.
+- Introduced subtle interaction feedback:
+  - hover lift (`translateY(-1px)`),
+  - active reset (`translateY(0)`).
+- Updated Browse button to a softer SaaS gradient treatment while preserving existing size/tap targets.
+
+#### E) Dark mode parity for new visual layer
+- Updated dark card surfaces to match the new gradient/elevation style.
+- Updated dark primary button style to include matching CTA elevation shadow.
+- Ensured dark-mode primary button declarations were consolidated to avoid duplicate selector drift.
+
+### Regression/safety checks completed
+- Confirmed single authoritative definitions for key selectors after edit:
+  - `.topbar`
+  - `.container`
+  - `.card`
+  - `button.primary`
+- Removed duplicate dark-mode `button.primary` block by merging into one declaration.
+
+### Effective outcome
+- The UI now presents a cleaner, more modern SaaS visual hierarchy (cards, CTA buttons, shell depth) while keeping:
+  - iOS Safari clipping fixes intact,
+  - existing mobile safe-area behavior,
+  - existing interaction and backend logic unchanged.
+
+---
+
+## 46) AI search-bar icon regression fix (shape/animation restore) (2026-02-28, completed)
+
+### User feedback addressed
+- After the SaaS visual polish pass, the AI icon in the search bar (`.dr-icon`) appeared visually broken.
+- Request: revert AI icon shape/border/animation behavior to previous state while keeping all other improvements.
+
+### Root cause
+- Global button interaction polish introduced universal hover/active transform rules:
+  - `button:hover { ... transform: translateY(-1px); }`
+  - `button:active { transform: translateY(0); }`
+- Because the AI icon is implemented as a `<button class="dr-icon">`, it inherited this transform behavior, which interfered with the icon’s centered circular composition and animated outline rendering.
+
+### Fix applied
+- File: `search-app/app/static/style.css`
+- Scoped hover/active transform behavior to exclude `.dr-icon`:
+  - `button:not(.dr-icon):hover { ... }`
+  - `button:not(.dr-icon):active { ... }`
+
+### Result
+- AI icon shape, border trace, and animation render as before.
+- Global modern button interactions remain active for all other buttons.
+- No functional behavior changed.
+
+---
+
+## 47) AI icon right-edge alignment restore in search bar (2026-02-28, completed)
+
+### User feedback addressed
+- Follow-up issue: the AI icon/animation no longer appeared anchored to the right edge of the search input as in the previous UI.
+
+### Fix applied
+- File: `search-app/app/static/style.css`
+- Refined `.dr-icon` positioning and geometry to restore edge alignment and circular integrity:
+  - `right: 8px` (explicit inset from searchbar edge)
+  - fixed dimensions + min constraints (`40x40`)
+  - reset padding/margin/line-height and set `box-sizing: border-box`
+  - raised z-index (`z-index: 2`) to ensure clean overlay above input edge/ring
+
+### Result
+- AI icon and animated ring are again visually aligned at the search bar’s right edge.
+- Prior animation style remains intact.
+- Other SaaS UI enhancements remain unchanged.
+
+---
+
+## 48) AI icon edge-tight alignment + upload border animation parity (2026-02-28, completed)
+
+### User feedback addressed
+- Move AI icon/animated ring even closer to the right edge of the search bar (almost touching).
+- Reuse AI icon border animation style (colors + speed + gradient style) for upload button ready-state animation after file drop.
+
+### Files updated
+- `search-app/app/static/style.css`
+
+### Changes applied
+
+#### A) AI icon tighter edge placement
+- `.dr-icon` horizontal inset changed:
+  - `right: 2px` (from `8px`)
+- Result: icon and ring sit almost flush with the search bar’s right edge while preserving circular geometry and readability.
+
+#### B) Upload button animation converted to AI-icon style parity
+- Updated `button.primary.upload-ready::after` to mirror AI icon animation style:
+  - switched to the same conic gradient palette:
+    - `#5aa5ff, #ff6b6b, #ffd84d, #33d17a, #5aa5ff`
+  - switched animation to shared `spin` keyframes
+  - matched animation speed to AI icon (`1.6s linear infinite`)
+- Removed the prior `upload-border-sweep` keyframes block (no longer used).
+
+### Effective result
+- Search bar AI icon now appears nearly touching the right edge as requested.
+- Upload ready border animation now visually matches AI icon’s color flow and rotation cadence for consistent brand motion language.
+
+---
+
+## 49) Upload ready border regression fix — belt motion (not fan spin) (2026-02-28, completed)
+
+### User feedback addressed
+- The upload-ready border had correct colors/speed, but looked like a spinning fan.
+- Required behavior: border animation should travel around button edges like a moving belt, consistent with previous accepted behavior.
+
+### File updated
+- `search-app/app/static/style.css`
+
+### Fix applied
+- Reworked `button.primary.upload-ready::after` animation from conic-rotation to perimeter belt sweep:
+  - replaced conic gradient with horizontal linear gradient using the same palette stops,
+  - added `background-size: 220% 220%`,
+  - switched animation to new keyframes `upload-border-belt 1.6s linear infinite`.
+- Added:
+  - `@keyframes upload-border-belt { 0% { background-position: 0% 50%; } 100% { background-position: 220% 50%; } }`
+
+### Effective result
+- Upload-ready state now animates as a moving edge-trace/belt rather than a radial fan spin.
+- AI icon keeps its existing conic spin behavior and remains unchanged.
+- Color palette and cadence remain aligned with the user-approved visual style.
+
+
