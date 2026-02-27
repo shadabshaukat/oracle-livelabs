@@ -73,7 +73,7 @@
           <input id="newSpaceName" placeholder="New space" />
           <button id="createSpaceBtn">Create</button>
         </div>
-        <button id="logoutBtn" class="ghost">Logout</button>
+        <button id="logoutBtn" class="primary">Logout</button>
       </div>
       <div id="searchHistoryPanel" class="history-panel" hidden>
         <div class="card-header collapsible" id="historyToggle" role="button" tabindex="0" aria-expanded="false">
@@ -654,6 +654,16 @@
       const isMobile = window.innerWidth <= 720;
       document.body.classList.toggle('is-mobile', isMobile);
       return isMobile;
+    }
+
+    function applyMobileRenderMode() {
+      const isMobile = updateDeviceClass();
+      if (!isMobile) return;
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      const viewport = document.querySelector('meta[name="viewport"]');
+      if (viewport) {
+        viewport.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+      }
     }
 
     function resetMobilePanels() {
@@ -2966,6 +2976,7 @@
         populateHistorySpaceFilter();
         loadSearchHistory();
         resetMobilePanels();
+        applyMobileRenderMode();
       } else {
         authPanel.hidden = false;
         accountPanel.hidden = true;
@@ -3301,6 +3312,7 @@
       try {
         await api('/api/login', { method: 'POST', body: { email, password } });
         await initUser();
+        applyMobileRenderMode();
         showToast('Logged in');
       } catch { showToast('Login failed'); }
     });
@@ -3310,6 +3322,7 @@
       try {
         await api('/api/register', { method: 'POST', body: { email, password } });
         await initUser();
+        applyMobileRenderMode();
         showToast('Registered');
       } catch { showToast('Registration failed'); }
     });
@@ -3464,7 +3477,8 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       updateDeviceClass();
-      window.addEventListener('resize', updateDeviceClass);
+      applyMobileRenderMode();
+      window.addEventListener('resize', applyMobileRenderMode);
       initUser();
       loadDeepResearchConfig();
       const storedContext = localStorage.getItem('sqlContext') || 'user';
