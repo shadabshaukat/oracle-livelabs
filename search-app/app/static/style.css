@@ -591,6 +591,45 @@ button:not(.dr-icon):active { transform: translateY(0); }
   gap: 6px;
   word-break: break-word;
 }
+
+.dropzone-selection {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dropzone-file-list {
+  width: min(100%, 760px);
+  max-height: 110px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  text-align: left;
+}
+
+.dropzone-file-item {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropzone-file-item + .dropzone-file-item {
+  margin-top: 3px;
+}
+
+.dropzone-file-item--more {
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
 .dropzone-main {
   font-size: 16px;
   font-weight: 700;
@@ -1534,6 +1573,12 @@ body.dark .dropzone {
   border-color: #334155;
   color: #94a3b8;
 }
+body.dark .dropzone-file-list {
+  background: rgba(15, 23, 42, 0.62);
+  border-color: rgba(96, 165, 250, 0.32);
+}
+body.dark .dropzone-file-item { color: #cbd5e1; }
+body.dark .dropzone-file-item--more { color: #93c5fd; }
 body.dark .dropzone-main { color: #e5e7eb; }
 body.dark .dropzone-subtext { color: #94a3b8; }
 body.dark .dropzone-subtext--limit { color: #cbd5f5; }

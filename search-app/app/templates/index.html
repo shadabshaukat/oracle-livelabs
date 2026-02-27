@@ -346,9 +346,15 @@
         </div>
         <div class="row">
           <div id="dropzone" class="dropzone">
-            <div class="dropzone-main" id="dropzoneMainText">Drag &amp; drop files here</div>
-            <div class="dropzone-subtext">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</div>
-            <div class="dropzone-subtext dropzone-subtext--limit">Max File Size : 30MB</div>
+            <div id="dropzoneInstruction">
+              <div class="dropzone-main">Drag &amp; drop files here</div>
+              <div class="dropzone-subtext">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</div>
+              <div class="dropzone-subtext dropzone-subtext--limit">Max File Size : 30MB</div>
+            </div>
+            <div id="dropzoneSelection" class="dropzone-selection" hidden>
+              <div class="dropzone-main" id="dropzoneMainText">0 file(s) ready</div>
+              <div id="dropzoneFileList" class="dropzone-file-list"></div>
+            </div>
           </div>
         </div>
         <div class="row wrap upload-actions-row">
@@ -2509,9 +2515,45 @@
       if (status) status.textContent = '';
       if (statusRow) statusRow.hidden = true;
       if (loading) loading.hidden = true;
-      const dzMain = document.getElementById('dropzoneMainText');
-      if (dzMain) dzMain.textContent = 'Drag & drop files here';
+      setDropzoneSelection([], 'ready');
       updateUploadReadyState();
+    }
+
+    function setDropzoneSelection(files, stateLabel = 'ready') {
+      const instruction = document.getElementById('dropzoneInstruction');
+      const selection = document.getElementById('dropzoneSelection');
+      const main = document.getElementById('dropzoneMainText');
+      const list = document.getElementById('dropzoneFileList');
+      const normalized = Array.isArray(files) ? files : [];
+
+      if (!normalized.length) {
+        if (instruction) instruction.hidden = false;
+        if (selection) selection.hidden = true;
+        if (main) main.textContent = '0 file(s) ready';
+        if (list) list.innerHTML = '';
+        return;
+      }
+
+      if (instruction) instruction.hidden = true;
+      if (selection) selection.hidden = false;
+      if (main) main.textContent = `${normalized.length} file(s) ${stateLabel}`;
+      if (!list) return;
+
+      list.innerHTML = '';
+      const maxVisible = 6;
+      const visible = normalized.slice(0, maxVisible);
+      visible.forEach((f) => {
+        const row = document.createElement('div');
+        row.className = 'dropzone-file-item';
+        row.textContent = f?.webkitRelativePath || f?.name || 'Unnamed file';
+        list.appendChild(row);
+      });
+      if (normalized.length > maxVisible) {
+        const more = document.createElement('div');
+        more.className = 'dropzone-file-item dropzone-file-item--more';
+        more.textContent = `+${normalized.length - maxVisible} more file(s)`;
+        list.appendChild(more);
+      }
     }
 
     function addFilesToList(fileList) {
@@ -2521,8 +2563,7 @@
         return;
       }
       for (const f of fileList) droppedFiles.push(f);
-      const dzMain = document.getElementById('dropzoneMainText');
-      if (dzMain) dzMain.textContent = `${droppedFiles.length} file(s) ready`;
+      setDropzoneSelection(droppedFiles, 'ready');
       showToast(`${droppedFiles.length} file(s) ready`);
       updateUploadReadyState();
     }
@@ -2585,8 +2626,7 @@
           return;
         }
         const count = el.files ? el.files.length : 0;
-        const dzMain = document.getElementById('dropzoneMainText');
-        if (dzMain) dzMain.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
+        setDropzoneSelection(chosen, count ? 'selected' : 'ready');
         updateUploadReadyState();
       });
     }
