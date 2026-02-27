@@ -1171,3 +1171,113 @@ Recommended improvements (priority ordered):
 - Remote still shows DOCX instability/non-completion under the same validation flow.
 - Net: core API parity is good for health/PDF/image/search/download/delete, but **DOCX ingest parity remains unresolved on remote**.
 
+---
+
+## 36) Upload drop-zone UX polish (2026-02-27)
+
+### Request implemented
+- Moved upload guidance text inside the drag-and-drop box with smaller, aligned subtext.
+- Added explicit inline limit text: `Max File Size : 30MB` under the formats line.
+- Increased drag-and-drop box visual width and size.
+- Added a subtle theme-consistent gradient background for the drop zone (light + dark mode variants).
+
+### Files updated
+- `search-app/app/templates/index.html`
+  - Drop zone now renders structured content:
+    - heading: `Drag & drop files here`
+    - supported formats line
+    - max size line (`30MB`)
+  - Updated JS to change only heading text (`#dropzoneMainText`) when files are selected/dropped/reset.
+- `search-app/app/static/style.css`
+  - Added/updated styles for:
+    - `.dropzone` (larger width, gradient, spacing)
+    - `.dropzone-main`
+    - `.dropzone-subtext`
+    - `.dropzone-subtext--limit`
+  - Added dark-mode gradient styling parity for the same classes.
+
+---
+
+## 37) Upload drop-zone sizing follow-up (2026-02-27, completed)
+
+### Request context
+- Final pass in this session to make the upload drag-and-drop area feel slightly wider while keeping the previously added copy/gradient styles intact.
+
+### Change applied
+- File: `search-app/app/static/style.css`
+  - Updated drop zone width cap:
+    - from `width: min(100%, 860px);`
+    - to `width: min(100%, 900px);`
+
+### Effective result
+- Upload box now has a modestly wider visual footprint on desktop while preserving:
+  - inline support text under “Drag & drop files here”,
+  - `Max File Size : 30MB` line,
+  - theme-aligned gradient in both light and dark mode.
+
+---
+
+## 38) Reusable scan + task prompt template (2026-02-27, added)
+
+Use this template at the start of future sessions when you want a full rescan + durable session specs logging.
+
+```text
+scan '/Users/shadab/Downloads/oracle-livelabs/search-app' and get ready for me to make changes in code and UI UX. I had a previous session but it ran out of context window size. Ensure in this session you document everything to a proper specs md file in docs folder, so i can revisit it if the context window blows out.
+
+<Task to Implement>
+Insert Task 1 text
+<Task 1 End>
+
+<Task to Implement>
+Insert Task 2 text
+<Task 1 End>
+Now go go go
+```
+
+### Notes
+- Replace `Insert Task 1 text` / `Insert Task 2 text` with your actual implementation requests.
+- Keep adding more `<Task to Implement> ...` blocks as needed.
+- This is intentionally preserved in `docs/search-app/SESSION-SPECS.md` for quick reuse after context-window resets.
+
+---
+
+## 39) Mobile app-like responsive pass + dark-mode parity hardening (2026-02-27, completed)
+
+### Request implemented
+- Improve mobile rendering so the app behaves more like an iOS-style mobile experience when on small screens, while preserving desktop layout on larger screens.
+- Ensure dark mode styling is consistently applied across all major UI surfaces, with special focus on:
+  - Deep Research modal/popup and drawers,
+  - Search History panel and related controls,
+  - settings/panels and supporting surfaces.
+
+### Files updated
+- `search-app/app/static/style.css`
+
+### Mobile UX updates (<= 720px)
+- Increased mobile legibility and touch comfort:
+  - base `font-size` normalization,
+  - larger tab tap targets,
+  - search input min-height/size tuning,
+  - larger card header typography.
+- Improved panel ergonomics:
+  - settings fields with stronger spacing and readable text,
+  - dropzone adjusted for full-width mobile presentation and readable support text,
+  - Search History cards/rows/controls stack better for narrow viewports.
+- Deep Research mobile behavior refinement:
+  - sticky DR header in fullscreen modal,
+  - drawer behavior updated to full-screen vertical slide interaction (top/bottom style) for both sessions and notebook drawers,
+  - better small-screen form spacing in composer and controls.
+
+### Dark mode parity hardening
+- Added/expanded dark styles for consistency in:
+  - collapsible header hover states,
+  - history panel surfaces and nested blocks,
+  - settings/panel/search-related regions,
+  - DR modal core surfaces (`dr-main`, `dr-composer`, `dr-main-hero`, `dr-chat`, drawers, followup modal),
+  - retained high-contrast text/border treatment across existing components.
+
+### Effective result
+- On mobile, the app now presents with stronger “mobile app” ergonomics (sizing, spacing, full-screen DR interactions, stacked controls).
+- On desktop, existing layout model remains intact.
+- Dark mode now has stronger consistency across DR, history, panels, and settings.
+
