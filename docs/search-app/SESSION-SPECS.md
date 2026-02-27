@@ -1327,3 +1327,92 @@ Now go go go
 ### Effective result
 - Logout now uses the same primary background + text styling as Search and Upload for consistent CTA visual language.
 
+---
+
+## 42) Deep Research popup responsive reset + close button/header mobile alignment (2026-02-27, completed)
+
+### Request implemented
+- Make Deep Research popup open in properly scaled responsive mode (mobile/desktop) without requiring manual zoom-out on mobile.
+- Make the DR popup close button match the same primary blue style as other CTA buttons and slightly increase its size.
+- Ensure top header alignment/layout is clean and readable on mobile.
+
+### Files updated
+- `search-app/app/templates/index.html`
+- `search-app/app/static/style.css`
+
+### Implementation details
+
+#### A) Responsive render normalization generalized
+- Replaced mobile-only helper with a unified responsive helper:
+  - `applyResponsiveRenderMode()`
+- Behavior:
+  - updates device class via `updateDeviceClass()`
+  - sets viewport meta to:
+    - mobile: `width=device-width, initial-scale=1, viewport-fit=cover`
+    - desktop: `width=device-width, initial-scale=1`
+  - on mobile, resets scroll to top (`window.scrollTo(...)`) to stabilize initial view framing.
+
+#### B) DR modal open lifecycle enforcement
+- In `drOpenModal()`, responsive render mode is applied:
+  - immediately before modal visibility/open state changes,
+  - and again just after modal open class is applied,
+  to reduce stale zoom/layout state carryover when DR is launched.
+
+#### C) Lifecycle hook alignment for auth + page load
+- `applyResponsiveRenderMode()` is called at:
+  - authenticated branch of `renderAccount()`,
+  - successful login/register completion paths,
+  - `DOMContentLoaded`,
+  - `window.resize`.
+
+#### D) DR close button CTA parity + size increase
+- DR close button now uses primary button styling in markup:
+  - `<button id="drClose" class="primary" ...>✕</button>`
+- Sizing updates in CSS:
+  - desktop: `min-width/min-height: 42px`, larger padding, `font-size: 18px`
+  - mobile: `min-width/min-height: 46px`, `font-size: 20px`
+- Added dark-mode explicit parity rule:
+  - `body.dark #drClose.primary` with matching blue background/border and white text.
+
+#### E) Mobile top header alignment polish
+- Under `@media (max-width: 720px)`:
+  - `.topbar-title` now wraps more reliably and aligns cleanly (`line-height`, `flex`, `word-break`, text alignment)
+  - `.topbar-actions` now uses full-width alignment and consistent spacing/gap for small screens.
+
+### Effective result
+- Deep Research modal now opens with stronger mobile/desktop viewport normalization, reducing manual zoom-out requirement on phones.
+- DR close button is visually consistent with other primary blue actions and easier to tap/read.
+- Top header presentation on mobile is more stable, aligned, and readable.
+
+---
+
+## 43) Deep Research desktop/mobile render verification pass (2026-02-27, completed)
+
+### Follow-up request implemented
+- Validate DR modal rendering quality across desktop + mobile for all major visible elements.
+- Apply any final responsive polish needed for consistency and usability.
+
+### File updated
+- `search-app/app/static/style.css`
+
+### Verification + polish applied
+1. **Header/title alignment hardening**
+   - Added `.dr-title-main` layout rule to keep the title area stable and non-jittery with mixed wrapping controls.
+   - Refined mobile `.dr-header-actions` alignment (`align-items: center`) and constrained direct children to avoid uneven stretching.
+
+2. **Mobile composer readability/input zoom prevention parity**
+   - Increased mobile DR composer textarea font size from `14px` to `16px` for better readability and iOS zoom-avoidance consistency.
+
+3. **Follow-up modal mobile responsiveness**
+   - Added mobile constraints for `.dr-followup-modal`:
+     - wider safe-fit layout (`width: calc(100% - 20px)`),
+     - capped modal height with scroll support,
+     - reduced padding for small screens.
+   - Stacked `.dr-followup-actions` buttons vertically with full-width touch targets on mobile.
+
+### Effective result
+- DR experience is now more consistent across desktop and mobile for:
+  - header/title/actions alignment,
+  - composer readability/interaction,
+  - follow-up dialog sizing and touch ergonomics.
+
