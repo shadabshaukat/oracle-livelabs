@@ -335,14 +335,17 @@
         <span class="chevron">▾</span>
       </div>
       <div id="uploadBody" hidden>
-        <p class="muted">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</p>
         <div class="row upload-browse-row">
           <label class="browse-btn" for="files">Browse files</label>
           <span class="muted small">Choose files to upload or drag & drop below.</span>
           <input id="files" class="file-input" type="file" multiple accept=".pdf,.docx,.doc,.txt,.html,.htm,.md,.csv,.json,.xml,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp,.bmp" />
         </div>
         <div class="row">
-          <div id="dropzone" class="dropzone">Drag & drop files here</div>
+          <div id="dropzone" class="dropzone">
+            <div class="dropzone-main" id="dropzoneMainText">Drag &amp; drop files here</div>
+            <div class="dropzone-subtext">Supported formats: PDF, DOCX, DOC, TXT, HTML, MD, CSV, JSON, XML, PPTX, XLSX, XLS, PNG, JPG, JPEG, GIF, WEBP, BMP</div>
+            <div class="dropzone-subtext dropzone-subtext--limit">Max File Size : 30MB</div>
+          </div>
         </div>
         <div class="row wrap upload-actions-row">
           <button id="uploadBtn" class="primary upload-btn">Upload</button>
@@ -2468,7 +2471,8 @@
       if (status) status.textContent = '';
       if (statusRow) statusRow.hidden = true;
       if (loading) loading.hidden = true;
-      if (dropzone) dropzone.textContent = 'Drag & drop files here';
+      const dzMain = document.getElementById('dropzoneMainText');
+      if (dzMain) dzMain.textContent = 'Drag & drop files here';
       updateUploadReadyState();
     }
 
@@ -2479,8 +2483,8 @@
         return;
       }
       for (const f of fileList) droppedFiles.push(f);
-      const dz = document.getElementById('dropzone');
-      if (dz) dz.textContent = `${droppedFiles.length} file(s) ready`;
+      const dzMain = document.getElementById('dropzoneMainText');
+      if (dzMain) dzMain.textContent = `${droppedFiles.length} file(s) ready`;
       showToast(`${droppedFiles.length} file(s) ready`);
       updateUploadReadyState();
     }
@@ -2543,8 +2547,8 @@
           return;
         }
         const count = el.files ? el.files.length : 0;
-        const dz = document.getElementById('dropzone');
-        if (dz) dz.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
+        const dzMain = document.getElementById('dropzoneMainText');
+        if (dzMain) dzMain.textContent = count ? `${count} file(s) selected` : 'Drag & drop files here';
         updateUploadReadyState();
       });
     }
