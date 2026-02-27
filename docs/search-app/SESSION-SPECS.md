@@ -1740,4 +1740,53 @@ Now go go go
 - SQL settings now show the concise label **Context** and remain aligned with the existing settings row layout.
 - Default SQL context is deterministically **User Schema** on page load.
 
+---
+
+## 52) Upload dropzone selection UX enhancement (file count + compact file list) (2026-02-28, completed)
+
+### User feedback addressed
+- When files are added/dropped, clear instructional text in the drop box.
+- Show selected file count and full file names inside the drop box.
+- Handle large file sets in a slick way without overflowing the upload box.
+
+### Files updated
+- `search-app/app/templates/index.html`
+- `search-app/app/static/style.css`
+
+### Implementation details
+
+#### A) Dropzone structure split into instruction vs selection state
+- Added two states inside `#dropzone`:
+  - `#dropzoneInstruction` (default instructional copy)
+  - `#dropzoneSelection` (active selection UI)
+- Added `#dropzoneFileList` container for showing selected file names.
+
+#### B) New selection renderer in JS
+- Added `setDropzoneSelection(files, stateLabel)` helper to:
+  - hide/show instruction vs selection views,
+  - set headline count text (e.g., `N file(s) ready/selected`),
+  - render file names with compact truncation-safe rows.
+- Uses a controlled list strategy for large selections:
+  - shows first 6 file names,
+  - appends a summary row like `+X more file(s)` for remainder.
+
+#### C) Lifecycle wiring updates
+- `addFilesToList(...)` now calls `setDropzoneSelection(droppedFiles, 'ready')`.
+- File-browse `change` handler now calls `setDropzoneSelection(chosen, 'selected')`.
+- `resetUploadPanel()` now restores default instruction state via `setDropzoneSelection([], 'ready')`.
+- Existing reset paths (Clear, post-upload completion, Home reset) inherit this behavior through `resetUploadPanel()`.
+
+#### D) Overflow-safe, modern list styling
+- Added styles for:
+  - `.dropzone-selection`
+  - `.dropzone-file-list` (bounded max-height + vertical scroll)
+  - `.dropzone-file-item` (single-line ellipsis)
+  - `.dropzone-file-item--more` (emphasized summary row)
+- Added dark-mode parity styles for the selection list and file rows.
+
+### Effective result
+- Dropzone now cleanly switches from instructional text to selection summary when files are added.
+- Users can see file count plus file names without layout spill.
+- Large selections remain readable via bounded list + `+more` summary behavior.
+
 
