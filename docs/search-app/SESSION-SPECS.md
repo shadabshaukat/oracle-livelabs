@@ -1655,4 +1655,89 @@ Now go go go
 - AI icon keeps its existing conic spin behavior and remains unchanged.
 - Color palette and cadence remain aligned with the user-approved visual style.
 
+---
+
+## 50) SQL settings parity update — dropdown controls for SQL Mode and SQL Context (2026-02-28, completed)
+
+### User request addressed
+- Make **SQL Mode** in SQL Search settings a dropdown with the same two options currently available.
+- Make **SQL Context** in SQL Search settings a dropdown with the same two options currently available.
+- Remove helper text: **"System context is admin-only."**
+
+### Files updated
+- `search-app/app/templates/index.html`
+
+### UI/markup changes
+
+#### A) SQL Mode converted from radio pills to select dropdown
+- Replaced legacy radio controls with:
+  - `<select id="sqlMode">`
+  - `<option value="run">Run SQL</option>`
+  - `<option value="show">Show SQL</option>`
+
+#### B) SQL Context converted from radio pills to select dropdown
+- Replaced legacy radio controls with:
+  - `<select id="sqlContext">`
+  - `<option value="user">User schema</option>`
+  - `<option value="system">System catalog</option>`
+
+#### C) Helper text removal
+- Removed the text block: `System context is admin-only.`
+
+### JavaScript behavior updates
+
+#### A) SQL request mode/context now read from selects
+- SQL execution mode is derived from `#sqlMode` value (`run` => execute true, `show` => execute false).
+- SQL context is derived from `#sqlContext` value with safe fallback to `user`.
+
+#### B) Admin gating adapted for dropdown option
+- Updated role-based SQL context control logic to target the `system` option inside `#sqlContext`.
+- For non-admin users:
+  - `system` option is disabled.
+  - if persisted/selected value is `system`, UI is forced back to `user`.
+
+#### C) LocalStorage persistence adapted to selects
+- `sqlContext` hydration and persistence now bind to `#sqlContext` change events.
+- Existing persistence for `sqlMemoryTurns` and `sqlAgenticMode` remains unchanged.
+
+### Regression cleanup and checks
+- Removed stale radio-era references in template/JS logic:
+  - `sqlModeRun`, `sqlModeShow`, `sqlContextUser`, `sqlContextSystem`.
+- Verified helper text removal and select-based wiring across:
+  - SQL submission path (`doSqlSearch`)
+  - role-based rendering (`renderSqlMode`)
+  - boot-time hydration (`DOMContentLoaded`)
+
+### Effective result
+- SQL settings now match the Text Search control pattern (dropdown-based option selection).
+- Requested text removal is complete.
+- Admin restriction behavior for system context is preserved via dropdown option disable/fallback logic.
+- SQL search behavior and persistence remain stable after control type migration.
+
+---
+
+## 51) SQL Context label/alignment + default behavior refinement (2026-02-28, completed)
+
+### User feedback addressed
+- Rename SQL settings label from **"SQL Context"** to **"Context"**.
+- Keep visual alignment consistent with other SQL settings rows.
+- Ensure default context is always **User Schema**.
+
+### File updated
+- `search-app/app/templates/index.html`
+
+### Changes applied
+- Updated label text:
+  - `label[for="sqlContext"]`: `SQL Context` → `Context`
+- Normalized option labels for consistency and readability:
+  - `User Schema`
+  - `System Catalog`
+- Enforced default on load in `DOMContentLoaded` init:
+  - `contextSelect.value = 'user';`
+  - this guarantees initial context defaults to User Schema regardless of prior localStorage value.
+
+### Effective result
+- SQL settings now show the concise label **Context** and remain aligned with the existing settings row layout.
+- Default SQL context is deterministically **User Schema** on page load.
+
 

@@ -235,20 +235,19 @@
           </div>
         </div>
         <div id="sqlSettings" class="settings-section" hidden>
-          <div class="row no-grow settings-field settings-field--stack">
-          <label class="block">SQL Mode</label>
-          <div class="radio-group">
-            <label class="radio-pill"><input id="sqlModeRun" type="radio" name="sqlMode" value="run" checked /> Run SQL</label>
-            <label class="radio-pill"><input id="sqlModeShow" type="radio" name="sqlMode" value="show" /> Show SQL</label>
+          <div class="row no-grow settings-field">
+          <label for="sqlMode">SQL Mode</label>
+          <select id="sqlMode">
+            <option value="run" selected>Run SQL</option>
+            <option value="show">Show SQL</option>
+          </select>
           </div>
-          </div>
-          <div class="row no-grow settings-field settings-field--stack">
-            <label class="block">SQL Context</label>
-            <div class="radio-group">
-              <label class="radio-pill"><input id="sqlContextUser" type="radio" name="sqlContext" value="user" checked /> User schema</label>
-              <label class="radio-pill"><input id="sqlContextSystem" type="radio" name="sqlContext" value="system" /> System catalog</label>
-            </div>
-            <span class="muted small">System context is admin-only.</span>
+          <div class="row no-grow settings-field">
+            <label for="sqlContext">Context</label>
+            <select id="sqlContext">
+              <option value="user" selected>User Schema</option>
+              <option value="system">System Catalog</option>
+            </select>
           </div>
           <div class="row no-grow settings-field">
           <label for="sqlMaxRows" class="leftpad">Max rows</label>
@@ -2174,9 +2173,9 @@
 
     async function doSqlSearch() {
       const question = document.getElementById('query').value.trim();
-      const execute = document.getElementById('sqlModeRun').checked;
+      const execute = (document.getElementById('sqlMode')?.value || 'run') === 'run';
       const showResults = execute;
-      const sqlContext = document.getElementById('sqlContextSystem').checked ? 'system' : 'user';
+      const sqlContext = document.getElementById('sqlContext')?.value || 'user';
       const maxRows = parseInt(document.getElementById('sqlMaxRows').value || '{{ sql_default_rows }}', 10);
       const memoryTurns = parseInt(document.getElementById('sqlMemoryTurns').value || '{{ sql_memory_turns }}', 10);
       const agenticMode = document.getElementById('sqlAgenticMode')?.checked ?? {{ 'true' if sql_agentic_mode_default else 'false' }};
@@ -2972,14 +2971,16 @@
       if (!allowed && searchMode === 'sql') {
         document.getElementById('searchModeText').click();
       }
-      const systemRadio = document.getElementById('sqlContextSystem');
-      const userRadio = document.getElementById('sqlContextUser');
-      if (systemRadio) {
-        systemRadio.disabled = state.role !== 'admin';
-      }
-      if (userRadio && systemRadio && state.role !== 'admin') {
-        userRadio.checked = true;
-        systemRadio.checked = false;
+      const sqlContextSelect = document.getElementById('sqlContext');
+      if (sqlContextSelect) {
+        const isAdmin = state.role === 'admin';
+        const systemOption = sqlContextSelect.querySelector('option[value="system"]');
+        if (systemOption) {
+          systemOption.disabled = !isAdmin;
+        }
+        if (!isAdmin && sqlContextSelect.value === 'system') {
+          sqlContextSelect.value = 'user';
+        }
       }
     }
 
@@ -3514,22 +3515,13 @@
       }
       initUser();
       loadDeepResearchConfig();
-      const storedContext = localStorage.getItem('sqlContext') || 'user';
-      const contextUser = document.getElementById('sqlContextUser');
-      const contextSystem = document.getElementById('sqlContextSystem');
+      const contextSelect = document.getElementById('sqlContext');
       const memoryInput = document.getElementById('sqlMemoryTurns');
       const agenticModeInput = document.getElementById('sqlAgenticMode');
-      if (contextUser && contextSystem) {
-        if (storedContext === 'system') {
-          contextSystem.checked = true;
-        } else {
-          contextUser.checked = true;
-        }
-        contextUser.addEventListener('change', () => {
-          if (contextUser.checked) localStorage.setItem('sqlContext', 'user');
-        });
-        contextSystem.addEventListener('change', () => {
-          if (contextSystem.checked) localStorage.setItem('sqlContext', 'system');
+      if (contextSelect) {
+        contextSelect.value = 'user';
+        contextSelect.addEventListener('change', () => {
+          localStorage.setItem('sqlContext', contextSelect.value || 'user');
         });
       }
       if (memoryInput) {
