@@ -3,6 +3,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Keep platform-specific installation and service management isolated. The
+# Linux path below is intentionally unchanged; macOS has its own runner.
+case "$(uname -s)" in
+  Darwin)
+    exec ./run_macos.sh "$@"
+    ;;
+  Linux)
+    ;;
+  *)
+    echo "Unsupported operating system: $(uname -s). Supported: Linux and macOS." >&2
+    exit 1
+    ;;
+esac
+
 load_environment() {
   # .env contains deployment values; versions.env contains immutable build pins
   # and intentionally wins for version/model identity.
