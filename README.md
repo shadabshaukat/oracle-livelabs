@@ -14,7 +14,7 @@ This repository contains two related stacks that together deliver an enterprise 
    - Multi‑mode retrieval: Semantic (pgvector), Full‑Text (tsvector), Hybrid (weighted RRF), and RAG with a local Ollama model by default
    - Deep Research (DR) sessions with notebook, follow-ups, and optional web search
    - SQL Search (NL2SQL), search history auditing, and persistent memory across text/SQL/DR
-   - Dual storage backends for uploads: local file system and/or OCI Object Storage, with timestamped folder structure
+   - Local home-directory storage by default, with OCI Object Storage or S3 available only when explicitly enabled
 
 
 ## Documentation Index
@@ -27,7 +27,7 @@ This repository contains two related stacks that together deliver an enterprise 
 ## Architecture Overview
 - Terraform provisions the network and OCI PostgreSQL. Optional compute can be created.
 - The app connects to OCI PostgreSQL and self‑manages schema and indexes on startup (CREATE IF NOT EXISTS).
-- Files uploaded via UI/API are saved locally under `storage/uploads/YYYY/MM/DD/HHMMSS/filename`. When configured, they are also uploaded to OCI Object Storage with the same object path; the **object identifiers** (provider/bucket/object name) are stored in document metadata and downloads/thumbnails are streamed by the app via the OCI SDK (no PAR URLs).
+- Files uploaded via UI/API are saved by default under `$HOME/.oracle-livelabs/search-app/uploads/<user>/YYYY/MM/DD/HHMMSS/filename`. Existing directories and files are preserved. OCI Object Storage or S3 is contacted only when `STORAGE_BACKEND` explicitly enables it.
 
 ### End-to-end Workflow (Text + Image)
 1) **Upload** (UI or API) → files stored locally and optionally in OCI Object Storage.
@@ -94,12 +94,16 @@ For production, set additional variables as needed (see [docs/oci_postgres_tf_st
 
 
 ## Configuring and Running the Application
-The app can run anywhere that can reach the OCI PostgreSQL endpoint. You can run it on your workstation, on the optional Compute VM, or in a container VM.
+The app can run anywhere that can reach a PostgreSQL server with pgvector. OCI PostgreSQL is one option, not an
+application-runtime requirement.
 
 ### Prerequisites
-- Linux x86_64 or ARM64 host with systemd, 2-4 OCPUs, 8 GB RAM minimum, and outbound HTTPS during bootstrap
-- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
-- No preinstalled Python, uv, Ollama, or model is required; `run.sh` installs the pinned versions on first use
+- Supported host: glibc Linux x86_64/ARM64 with systemd, or Apple Silicon macOS 14+
+- 2-4 OCPUs/CPU cores, 8 GB RAM minimum, and at least 15 GB free during a clean build
+- Linux host tools: `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
+- A reachable PostgreSQL server with `vector`, `pgcrypto`, and `citext`; local PostgreSQL commonly needs `DB_SSLMODE=disable`
+- No preinstalled Python, uv, Ollama, Homebrew, or model is required. Linux installs the pinned Ollama runtime;
+  macOS reuses an existing compatible Ollama and installs a checksum-pinned home-local fallback only when absent.
 
 ### Setup
 1) Prepare environment
@@ -107,7 +111,7 @@ The app can run anywhere that can reach the OCI PostgreSQL endpoint. You can run
 cd search-app
 cp .env.example .env
 # Edit .env to point to your OCI PostgreSQL (either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD)
-# Optionally set STORAGE_BACKEND and OCI_OS_BUCKET_NAME (see below)
+# Leave STORAGE_BACKEND=local unless object storage is explicitly required
 ```
 
 Key environment variables (see `search-app/.env.example` and `docs/search-app/README.md` for a full list):
@@ -118,6 +122,7 @@ Key environment variables (see `search-app/.env.example` and `docs/search-app/RE
 - Full‑Text: `FTS_CONFIG`
 - Storage backends:
   - `STORAGE_BACKEND=local|oci|both` (default `local`)
+  - `DATA_DIR` defaults to `$HOME/.oracle-livelabs/search-app`; uploads, model cache, logs, locks, and portable runtime files live below it
   - `OCI_OS_BUCKET_NAME` (required when using `oci` or `both`)
   - OCI credentials (config file or API key envs) for Object Storage
 - RAG LLM provider:
@@ -135,27 +140,40 @@ Key environment variables (see `search-app/.env.example` and `docs/search-app/RE
 ```
 This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth credentials in `.env`.
 
-On later runs, `run.sh` skips installation and model download when the exact artifacts are already present. It
-checks Ollama's resident-model API and preloads the model only when it is installed but not currently in memory.
+`run.sh` detects Linux versus macOS and dispatches to the platform-specific bootstrap. Linux retains its exact
+pinned systemd behavior. macOS first reuses a running or installed Ollama.app, Homebrew/PATH CLI, or explicit
+`OLLAMA_CLI_PATH` without replacing it. If no macOS Ollama exists, the bootstrap installs the checksum-verified
+official archive under the application home; Homebrew and sudo are not required. On either platform, the exact
+model is pulled only when missing/invalid and is loaded only when not currently resident.
 Use `./start.sh` after initial setup when you want the same runner in the background.
 
 `search-app/uv.lock` pins the complete transitive package graph and distribution hashes. Commit changes to
 `pyproject.toml` and `uv.lock` together; use `uv lock --upgrade` only for a deliberate, tested dependency upgrade.
-`search-app/deploy/versions.env` separately pins uv, Python, Ollama, the quantized model digest, binary checksums,
-and the embedding-model revision. Linux uses PyTorch's CPU-only wheel index, so rebuilds do not install CUDA packages.
+`search-app/deploy/versions.env` separately pins uv, Python, the Linux/macOS-fallback Ollama installer, the
+quantized model digest, binary checksums, and the embedding-model revision. An existing macOS Ollama may have a
+different version, but it must pass the required API, exact-model, context, loopback, and smoke-inference checks.
 
 Ollama is intentionally bound to `127.0.0.1:11434`. Do not open port 11434 in an OCI security list, NSG, or host
 firewall: the API is unauthenticated and the FastAPI process reaches it over loopback. Only the application port
-8000 should be allowed from trusted clients.
+8000 should be allowed from trusted clients. `run.sh` does not weaken a host or cloud firewall automatically.
 
 ### Common Deployment Patterns
 - **Linux VM**: run `./run.sh`; it performs first-use setup and starts immediately on subsequent runs.
-- **Clean rebuild**: stop the app, then run `CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh`.
+- **Apple Silicon Mac**: run `./run.sh`; an existing Ollama keeps its normal model store (usually `~/.ollama`).
+  Only the no-Ollama fallback runtime/model store is placed under `$HOME/.oracle-livelabs/search-app/runtime/macos/`.
+- **Clean rebuild**: stop the app, then run the matching `bootstrap_linux.sh` or `bootstrap_macos.sh` with
+  `CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1`. On macOS, the force flag refreshes only the managed fallback and never
+  replaces an external Ollama installation.
 - **Private DB access**: ensure the VM is in the same VCN/subnet or a peered network; allow 5432 only from trusted sources.
 
+Intel macOS is detected and rejected with an actionable message because the pinned PyTorch 2.12.1 full-platform
+build has no Intel macOS wheel. OCR is optional and requires a native Tesseract executable in addition to the
+locked Python package.
+
 ### Upload Behavior
-- Files are saved to `storage/uploads/YYYY/MM/DD/HHMMSS/<basename>`.
-- If `STORAGE_BACKEND` includes `oci` and `OCI_OS_BUCKET_NAME` is set, the same date/time path is uploaded to Object Storage and the object identifiers are stored in the DB. The app streams downloads/thumbnails via SDK-backed endpoints (no PAR links).
+- Files are saved to `$HOME/.oracle-livelabs/search-app/uploads/<user>/YYYY/MM/DD/HHMMSS/<basename>` by default.
+- `run.sh` creates missing home storage directories with private defaults and leaves existing contents and permissions unchanged.
+- OCI/S3 credentials or legacy object metadata cannot activate object storage while `STORAGE_BACKEND=local`. To use OCI, explicitly set `STORAGE_BACKEND=oci` (or `both` plus `OBJECT_STORAGE_PROVIDER=oci`) and configure `OCI_OS_BUCKET_NAME` and credentials.
 - Image uploads generate thumbnails for faster UI rendering in Library and Image Search.
 - Upload limits are enforced per file and per space:
   - `MAX_UPLOAD_SIZE_MB` (per-file size cap)

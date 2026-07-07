@@ -25,14 +25,14 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Runs on the app host (CPU by default, CUDA/MPS optional).
 
 5) **Storage Layer**
-   - Local filesystem: `storage/uploads/...`
-   - Optional OCI Object Storage: objects + thumbnails, **object identifiers stored in metadata**; downloads/thumbnails streamed via OCI SDK (no PAR URLs).
+   - Default local filesystem: `$HOME/.oracle-livelabs/search-app/uploads/...`
+   - Optional OCI Object Storage or S3 is strictly opt-in; ambient credentials and legacy object metadata cannot enable it while local mode is selected.
 
 ## Text Ingestion Lifecycle (End-to-End)
 
 1) **Upload**
    - UI or `/api/upload` receives files.
-   - File saved locally (`storage/uploads/<user>/<date>/<time>/file.ext`).
+   - File saved locally (`$HOME/.oracle-livelabs/search-app/uploads/<user>/<date>/<time>/file.ext`).
    - If `STORAGE_BACKEND=oci|both`, file is mirrored to Object Storage and object identifiers (provider/bucket/object name) are saved in metadata; downloads/thumbnails are served by SDK-backed endpoints.
 
 2) **Text Extraction** (`text_utils.py`)
@@ -100,7 +100,7 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Saved locally; optionally mirrored to Object Storage.
 
 2) **Image Processing** (`store.py`)
-   - Generate thumbnail (512px max) stored under `storage/uploads/thumbnails/` (and mirrored to Object Storage when enabled).
+   - Generate thumbnail (512px max) under the configured `UPLOAD_DIR` (and mirror it only when object storage is explicitly enabled).
    - Optional captioning model generates description + keywords.
 
 3) **Image Embedding** (`vision_embeddings.py`)
@@ -132,7 +132,7 @@ This document provides a full, in-depth view of the system architecture, focusin
 
 ## Model Caching (Text + Image)
 
-- Text embeddings model and image models are cached locally under `MODEL_CACHE_DIR` (default `storage/models`).
+- Text embeddings and image models are cached under `MODEL_CACHE_DIR` (default `$HOME/.oracle-livelabs/search-app/models`).
 - The app sets `HF_HOME`, `TRANSFORMERS_CACHE`, and `SENTENCE_TRANSFORMERS_HOME` to this directory and uses `cache_dir` for OpenCLIP to speed repeated loads.
 - The text embedding model is loaded at the immutable revision recorded in `deploy/versions.env`, matching existing stored vectors.
 - Models are loaded once per process via `lru_cache` to avoid reinitialization overhead.

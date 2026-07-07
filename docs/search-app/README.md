@@ -116,11 +116,12 @@ flowchart TD
 
 ## Requirements
 
-- Linux x86_64 or ARM64 with systemd (Oracle Linux 9 or a comparable distribution)
-- 2-4 OCPUs, at least 8 GB RAM, and at least 8 GB free disk
-- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
-- OCI PostgreSQL reachable from the host
-- pgvector extension enabled (the app will create it if permitted)
+- glibc Linux x86_64/ARM64 with systemd, or Apple Silicon macOS 14+
+- 2-4 OCPUs/CPU cores, at least 8 GB RAM, and at least 15 GB free during a clean build
+- Linux only: `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
+- PostgreSQL reachable from the host; OCI PostgreSQL is optional
+- `vector`, `pgcrypto`, and `citext` available (the app creates them if its DB role is permitted)
+- For a non-TLS local PostgreSQL, set `DB_SSLMODE=disable`
 
 ## Quick Start (One Command)
 
@@ -139,15 +140,24 @@ cp .env.example .env
 
 This starts FastAPI at http://0.0.0.0:8000. The UI is available at http://0.0.0.0:8000/
 
-`run.sh` automatically invokes the pinned bootstrap when uv, managed Python, Ollama, or the model is missing. On
-consecutive runs it skips bootstrap, service restart, registry access, and model pull. If the exact model is
-installed but absent from `/api/ps`, it is preloaded; if already resident, no inference request is sent.
+`run.sh` detects Linux versus macOS. Linux invokes its exact pinned bootstrap when needed. macOS reuses a running
+or installed Ollama (Ollama.app, PATH/Homebrew, or `OLLAMA_CLI_PATH`) without replacing it; only a Mac with no
+Ollama receives the checksum-pinned home-local fallback. Consecutive runs skip installation, service restart,
+registry access, model pull, and preload when everything is already ready.
+
+The full macOS build currently supports Apple Silicon on macOS 14+. Intel macOS is rejected before mutation because
+the pinned PyTorch 2.12.1 release has no Intel macOS wheel. Existing Ollama installations retain their normal model
+store (usually `~/.ollama`). The managed runtime under `$HOME/.oracle-livelabs/search-app/runtime/macos/` is used
+only when no existing Ollama can be found. Homebrew is neither installed nor required.
 
 ### Rebuild and upgrade policy
 
 ```bash
 ./stop.sh
-CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh
+case "$(uname -s)" in
+  Linux)  CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh ;;
+  Darwin) CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_macos.sh ;;
+esac
 ./start.sh
 ```
 
@@ -209,9 +219,11 @@ Environment variables (see .env.example):
   - IMAGE_KEYWORD_MAX (max tags stored per image)
 - Storage backend:
   - STORAGE_BACKEND=local|oci|both (default local)
+  - DATA_DIR defaults to `$HOME/.oracle-livelabs/search-app`
   - OCI_OS_BUCKET_NAME (required when STORAGE_BACKEND includes 'oci')
-- Files are saved locally under storage/uploads/YYYY/MM/DD/HHMMSS/<filename>; when using 'oci' or 'both', the same object path is used in OCI Object Storage and the **object identifiers** (provider/bucket/object name) are stored in document metadata. Downloads/thumbnails are streamed by the app via the OCI SDK (no PAR URLs).
-- OCI-only streaming: When STORAGE_BACKEND=oci, uploads stream directly to OCI without loading the whole file in RAM. A SpooledTemporaryFile is used for ingestion (in-memory up to 2MB, then disk; auto-deleted after use) for memory safety with large files.
+- Files are saved locally under `$HOME/.oracle-livelabs/search-app/uploads/<user>/YYYY/MM/DD/HHMMSS/<filename>` by default. Missing directories are created and existing directories are left unchanged.
+- OCI/S3 is used only after explicitly changing `STORAGE_BACKEND`; ambient credentials and persisted legacy object references cannot reactivate it in local mode.
+- Object-only modes still use `DATA_DIR/tmp_uploads` as a bounded local ingestion working path before optional cleanup.
 - Upload limits:
   - MAX_UPLOAD_SIZE_MB (per-file size cap)
   - MAX_FILES_PER_SPACE (maximum files in a space)
@@ -272,7 +284,8 @@ Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 
 
 ## RAG and Local Ollama
 
-- `bootstrap_linux.sh` installs Ollama 0.31.1 from a fixed release asset after checking its SHA-256.
+- `bootstrap_linux.sh` installs pinned Ollama 0.31.1. `bootstrap_macos.sh` reuses an existing compatible Ollama;
+  only its no-Ollama fallback installs 0.31.1 from the fixed SHA-256-checked release asset.
 - The default `ibm/granite4:1b-q4_K_M` model is about 1 GB, 1.63B parameters, CPU-quantized Q4_K_M,
   Apache-2.0 licensed, and intended for question answering, summarization, and RAG.
 - The bootstrap verifies the registry manifest digest before pull and `/api/tags` afterward. If the public tag ever
@@ -284,6 +297,10 @@ Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 
   for `[Source N]` citations. An inference failure returns a short availability message while search hits remain
   available in the References panel.
 - OCI GenAI, OpenAI, and Bedrock are still available when explicitly selected, but they are not defaults.
+- Ollama port 11434 is loopback-only and receives no firewall exception. Exposure of application port 8000 is an
+  operator decision and is not changed automatically by the portable bootstrap.
+- OCR requires the optional native Tesseract executable; its Python wrapper is locked, but the OS binary cannot be
+  supplied by a Python virtual environment.
 
 Example LLM test (with Basic Auth):
 

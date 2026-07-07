@@ -30,14 +30,22 @@ load_environment() {
   . ./deploy/versions.env
 }
 
+if [ ! -f .env ]; then
+  cp .env.example .env
+  chmod 0600 .env
+  echo "Created .env from the safe example; configure PostgreSQL and application secrets before starting."
+fi
 load_environment
+
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
 
 if ! command -v flock >/dev/null 2>&1; then
   echo "Missing required host command: flock (normally provided by util-linux)." >&2
   exit 1
 fi
-mkdir -p storage
-exec 9>storage/searchapp.run.lock
+exec 9>"$SEARCHAPP_RUN_DIR/searchapp.run.lock"
 if ! flock -n 9; then
   echo "Another search-app run or first-use setup is already active for this checkout." >&2
   exit 1

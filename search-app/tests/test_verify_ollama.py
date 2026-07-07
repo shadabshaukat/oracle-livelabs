@@ -102,6 +102,77 @@ class VerifyOllamaTests(unittest.TestCase):
 
         self.assertEqual([payload["keep_alive"] for payload in generate_payloads], [0, -1])
 
+    @patch.object(verify_ollama, "_registry_digest")
+    @patch.object(verify_ollama, "_json_request")
+    def test_missing_model_is_pulled_through_existing_api(self, request, registry_digest) -> None:
+        registry_digest.return_value = DIGEST
+        tag_responses = iter([{"models": []}, _tags(), _tags()])
+        pull_payloads: list[dict] = []
+
+        def response(url: str, **kwargs):
+            if url.endswith("/api/version"):
+                return {"version": "0.30.11"}
+            if url.endswith("/api/tags"):
+                return next(tag_responses)
+            if url.endswith("/api/pull"):
+                pull_payloads.append(kwargs["payload"])
+                return {"status": "success"}
+            self.fail(f"Unexpected URL: {url}")
+
+        request.side_effect = response
+        verify_ollama.verify(
+            "http://127.0.0.1:11434",
+            "0.30.11",
+            MODEL,
+            DIGEST,
+            pull_if_missing=True,
+        )
+
+        registry_digest.assert_called_once_with(MODEL)
+        self.assertEqual(pull_payloads, [{"model": MODEL, "stream": False}])
+
+    @patch.object(verify_ollama, "_registry_digest")
+    @patch.object(verify_ollama, "_json_request")
+    def test_existing_model_skips_registry_and_pull(self, request, registry_digest) -> None:
+        def response(url: str, **kwargs):
+            self.assertFalse(url.endswith("/api/pull"))
+            if url.endswith("/api/version"):
+                return {"version": "0.30.11"}
+            if url.endswith("/api/tags"):
+                return _tags()
+            self.fail(f"Unexpected URL: {url}")
+
+        request.side_effect = response
+        verify_ollama.verify(
+            "http://127.0.0.1:11434",
+            "0.30.11",
+            MODEL,
+            DIGEST,
+            pull_if_missing=True,
+        )
+
+        registry_digest.assert_not_called()
+
+    @patch.object(verify_ollama, "_registry_digest", return_value="changed")
+    @patch.object(verify_ollama, "_json_request")
+    def test_changed_registry_digest_refuses_pull(self, request, _registry_digest) -> None:
+        def response(url: str, **kwargs):
+            if url.endswith("/api/version"):
+                return {"version": VERSION}
+            if url.endswith("/api/tags"):
+                return {"models": []}
+            self.fail(f"Unexpected URL: {url}")
+
+        request.side_effect = response
+        with self.assertRaisesRegex(RuntimeError, "Registry model digest changed"):
+            verify_ollama.verify(
+                "http://127.0.0.1:11434",
+                VERSION,
+                MODEL,
+                DIGEST,
+                pull_if_missing=True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

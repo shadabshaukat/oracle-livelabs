@@ -74,8 +74,9 @@ def upload_object_bytes(bucket: str, object_name: str, data: bytes) -> bool:
 
 def save_upload(file_bytes: bytes, filename: str, user_email: Optional[str] = None) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
     """Save upload respecting storage backend selection.
-    Always writes a local file for ingestion (under storage/uploads when backend includes 'local',
-    otherwise under a temporary path). Optionally uploads to OCI when backend includes 'oci'.
+    Always writes a local file for ingestion (under the configured home upload
+    directory when the backend includes local, otherwise under its temp path).
+    Object storage is used only when explicitly enabled.
     Returns (local_path_for_ingest, object_provider, object_bucket, object_name).
     """
     ensure_dirs()
@@ -118,8 +119,8 @@ def save_upload_stream(fileobj, filename: str, user_email: Optional[str] = None)
     """Stream upload without loading whole file in memory.
     - If backend includes 'oci', stream to OCI using UploadManager.upload_stream
     - Always write a local file for ingestion:
-        * when backend includes 'local' -> storage/uploads/YYYY/MM/DD/HHMMSS/<basename>
-        * when backend is 'oci' only   -> storage/tmp_uploads/YYYY/MM/DD/HHMMSS/<basename>
+        * when backend includes 'local' -> UPLOAD_DIR/<user>/YYYY/MM/DD/HHMMSS/<basename>
+        * when backend is object-only   -> DATA_DIR/tmp_uploads/<user>/.../<basename>
     Returns (local_path_for_ingest, object_provider, object_bucket, object_name).
     """
     import shutil
@@ -495,4 +496,3 @@ def _process_image_asset(
             "image_height": height,
         }
     )
-

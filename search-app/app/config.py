@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 from pathlib import Path
 
 # Load environment variables from a .env file if present so `uv run searchapp` works without exporting vars
@@ -15,6 +15,34 @@ try:
 except Exception:
     # dotenv is optional; environment can still be provided by the shell or process manager
     pass
+
+
+def _resolve_storage_paths(
+    environ: Optional[Mapping[str, str]] = None,
+    home: Optional[Path] = None,
+) -> tuple[str, str, str]:
+    """Resolve writable app paths, defaulting to the current user's home."""
+    env = os.environ if environ is None else environ
+    home_dir = Path.home() if home is None else home
+    data_value = env.get("DATA_DIR") or str(home_dir / ".oracle-livelabs" / "search-app")
+    data_dir = Path(os.path.expandvars(data_value)).expanduser()
+    upload_value = env.get("UPLOAD_DIR") or str(data_dir / "uploads")
+    model_value = env.get("MODEL_CACHE_DIR") or str(data_dir / "models")
+    upload_dir = Path(os.path.expandvars(upload_value)).expanduser()
+    model_cache_dir = Path(os.path.expandvars(model_value)).expanduser()
+    return str(data_dir), str(upload_dir), str(model_cache_dir)
+
+
+def _resolve_storage_backend(environ: Optional[Mapping[str, str]] = None) -> str:
+    env = os.environ if environ is None else environ
+    backend = (env.get("STORAGE_BACKEND") or "local").strip().lower()
+    if backend not in {"local", "oci", "s3", "both"}:
+        raise ValueError("STORAGE_BACKEND must be one of: local, oci, s3, both")
+    return backend
+
+
+_DATA_DIR, _UPLOAD_DIR, _MODEL_CACHE_DIR = _resolve_storage_paths()
+_STORAGE_BACKEND = _resolve_storage_backend()
 
 
 def _get_bool(env: str, default: bool = False) -> bool:
@@ -32,10 +60,10 @@ class Settings:
     workers: int = int(os.getenv("WORKERS", "1"))
 
     # Storage
-    data_dir: str = os.getenv("DATA_DIR", "storage")
-    upload_dir: str = os.getenv("UPLOAD_DIR", "storage/uploads")
-    model_cache_dir: str = os.getenv("MODEL_CACHE_DIR", "storage/models")
-    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").lower()  # local | oci | s3 | both
+    data_dir: str = _DATA_DIR
+    upload_dir: str = _UPLOAD_DIR
+    model_cache_dir: str = _MODEL_CACHE_DIR
+    storage_backend: str = _STORAGE_BACKEND  # local | oci | s3 | both
     object_storage_provider: Optional[str] = os.getenv("OBJECT_STORAGE_PROVIDER")
     oci_os_bucket_name: Optional[str] = os.getenv("OCI_OS_BUCKET_NAME")
     s3_bucket_name: Optional[str] = os.getenv("S3_BUCKET_NAME")
@@ -238,6 +266,20 @@ class Settings:
     deep_research_memory_rollup_every_n: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_EVERY_N", "6"))
     deep_research_memory_rollup_min_messages: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_MIN_MESSAGES", "6"))
     deep_research_memory_rollup_max_chars: int = int(os.getenv("DEEP_RESEARCH_MEMORY_ROLLUP_MAX_CHARS", "12000"))
+
+    def __post_init__(self) -> None:
+        if self.storage_backend == "oci" and not self.oci_os_bucket_name:
+            raise ValueError("STORAGE_BACKEND=oci requires OCI_OS_BUCKET_NAME")
+        if self.storage_backend == "s3" and not self.s3_bucket_name:
+            raise ValueError("STORAGE_BACKEND=s3 requires S3_BUCKET_NAME")
+        if self.storage_backend == "both":
+            provider = (self.object_storage_provider or "").strip().lower()
+            if provider not in {"oci", "s3"}:
+                raise ValueError("STORAGE_BACKEND=both requires OBJECT_STORAGE_PROVIDER=oci or s3")
+            if provider == "oci" and not self.oci_os_bucket_name:
+                raise ValueError("OBJECT_STORAGE_PROVIDER=oci requires OCI_OS_BUCKET_NAME")
+            if provider == "s3" and not self.s3_bucket_name:
+                raise ValueError("OBJECT_STORAGE_PROVIDER=s3 requires S3_BUCKET_NAME")
 
 
 def build_database_url(s: Settings) -> str:

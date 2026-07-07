@@ -8,7 +8,7 @@ The Terraform stack in `oci_postgres_tf_stack/` provisions:
 - VCN + subnets + gateways
 - OCI PostgreSQL DB System (with pgvector enabled via app or config)
 - Optional Compute VM
-- Object Storage bucket for uploads
+- Optional Object Storage bucket for uploads; the application does not use it unless explicitly configured
 
 ### Option A: Terraform CLI
 
@@ -36,9 +36,10 @@ terraform apply plan.out
 ## 2) Application Deployment (search-app)
 
 ### Prerequisites
-- Linux x86_64 or ARM64 with systemd, 2-4 OCPUs, 8 GB RAM minimum, and at least 8 GB free disk
-- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
-- Access to OCI PostgreSQL endpoint
+- glibc Linux x86_64/ARM64 with systemd, or Apple Silicon macOS 14+
+- 2-4 OCPUs/CPU cores, 8 GB RAM minimum, and at least 15 GB free during a clean build
+- Linux only: `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
+- Reachable PostgreSQL with pgvector (`vector`, `pgcrypto`, and `citext` extensions)
 
 ### Setup
 
@@ -50,7 +51,8 @@ cp .env.example .env
 Update `.env` with:
 - `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` (or `DATABASE_URL`)
 - `LLM_PROVIDER=ollama` (default); the bootstrap installs the pinned local model
-- `STORAGE_BACKEND=local|oci|s3|both`
+- `STORAGE_BACKEND=local|oci|s3|both` (default `local`)
+- `DATA_DIR=${HOME}/.oracle-livelabs/search-app` (default writable root for uploads, model cache, logs, locks, and portable runtime files)
 - `OCI_OS_BUCKET_NAME` if using OCI storage
 - Upload limits: `MAX_UPLOAD_SIZE_MB` (per-file), `MAX_FILES_PER_SPACE`, `ALLOWED_UPLOAD_EXTENSIONS`
 - Deep Research + memory: `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`, `TEXT_PERSISTENT_MEMORY_ENABLED`, `SQL_PERSISTENT_MEMORY_ENABLED`, `IMAGE_PERSISTENT_MEMORY_ENABLED`
@@ -64,26 +66,41 @@ Update `.env` with:
 
 The app runs at **http://0.0.0.0:8000**.
 
-`run.sh` calls the bootstrap automatically when a pinned component is missing. The bootstrap verifies fixed
-SHA-256 checksums before installing uv 0.11.27 and Ollama 0.31.1, installs managed
-Python 3.14.6, verifies the immutable manifest digest for `ibm/granite4:1b-q4_K_M`, and performs
+`run.sh` detects the operating system and calls `bootstrap_linux.sh` or `bootstrap_macos.sh` when a component is
+missing. Linux retains the exact pinned Ollama/systemd installation. macOS reuses an existing running or installed
+Ollama without upgrading or replacing it; only a genuinely new Mac receives the checksum-pinned self-contained
+Ollama 0.31.1 fallback under the user's application home. No Homebrew or sudo installation is required. Both paths
+install managed Python 3.14.6, verify the immutable manifest digest for `ibm/granite4:1b-q4_K_M`, and perform
 `uv sync --locked` against the committed lockfile. It supports Linux x86_64 and ARM64 and fails closed on any
-binary, version, model, or digest mismatch.
+Linux binary/version or cross-platform model/digest mismatch. The macOS path currently supports Apple Silicon on macOS 14+;
+Intel macOS fails fast because the pinned PyTorch release has no Intel wheel.
 
-On a ready host, `run.sh` does not reinstall Ollama, restart its service, query the model registry, or pull the
-model. If the exact installed model is not listed by Ollama's resident-model API, it is preloaded with an
-indefinite keep-alive before FastAPI starts. Use `./start.sh` for background operation after initial setup.
+On a ready host, `run.sh` does not reinstall Ollama, restart its service, query the model registry, pull the model,
+or send a preload. If the model is missing, macOS downloads it through the existing Ollama `/api/pull`; if present
+but unloaded, it is preloaded with an indefinite keep-alive. An incompatible existing macOS Ollama is left
+untouched and produces upgrade guidance. Use `./start.sh` for background operation after initial setup.
+
+Both platform runners create the home storage tree when it is missing and leave it untouched when it already
+exists. OCI credentials alone do not enable OCI Object Storage or OCI Generative AI. Those services are used only
+after explicitly selecting `STORAGE_BACKEND=oci|both` or `LLM_PROVIDER=oci` and supplying their required settings.
 
 For a clean repeat of the exact build:
 
 ```bash
 ./stop.sh
-CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh
+case "$(uname -s)" in
+  Linux)  CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh ;;
+  Darwin) CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_macos.sh ;;
+esac
 ./start.sh
 ```
 
 The canonical pins are in `search-app/deploy/versions.env`; Python packages and artifact hashes are in
 `search-app/uv.lock`. Linux image dependencies use CPU-only PyTorch wheels and contain no CUDA runtime packages.
+
+Ollama is bound to loopback, so port 11434 requires no firewall rule. Port 8000 exposure is deliberately not
+automated: restrict it using the host/cloud firewall or reverse proxy appropriate to the deployment. OCR requires
+the native Tesseract executable and is unavailable when that optional host tool is absent.
 
 ## 3) Image Model Requirements (VM Host)
 
@@ -110,7 +127,7 @@ These install:
 ## 5) Recommended Production Patterns
 
 - Run on OCI Compute with private access to the DB.
-- Store uploads in OCI Object Storage (object identifiers stored; SDK streaming endpoints; no PAR URLs).
+- Keep the default local home storage for a single node. Explicitly enable OCI Object Storage for multi-node or durable object-storage deployments.
 - Use systemd for the API service.
 - Restrict CORS + rotate credentials.
 
@@ -157,9 +174,9 @@ To refine this:
 ## Ops Runbook (Day‑2 Operations)
 
 ### Daily/Weekly
-- Monitor app logs: `storage/logs/searchapp.log`.
+- Monitor app logs: `$HOME/.oracle-livelabs/search-app/logs/searchapp.log`.
 - Review DB health (`/api/ready`, PostgreSQL alerts).
-- Check disk usage for `storage/uploads/`.
+- Check disk usage for `$HOME/.oracle-livelabs/search-app/uploads/`.
 
 ### Monthly
 - Rotate credentials (DB, Basic Auth, OCI tokens).

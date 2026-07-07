@@ -70,5 +70,10 @@ share/python-wheels/
 Icon?
 ._*
 
+# Editor swap/backup files (may contain fragments of local secrets)
+*.swp
+*.swo
+*~
+
 # Common archives (e.g., ORM upload zips)
 *.zip

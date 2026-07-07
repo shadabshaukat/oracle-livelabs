@@ -3,7 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-PID_FILE="storage/searchapp.pid"
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
+
+PID_FILE="$SEARCHAPP_RUN_DIR/searchapp.pid"
 
 if [ ! -f "$PID_FILE" ]; then
   echo "No PID file found. Is the server running?"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed verification for the pinned local Ollama runtime and model."""
+"""Fail-closed verification for a local Ollama runtime and pinned model."""
 
 from __future__ import annotations
 
@@ -39,6 +39,76 @@ def _matching_model(data: dict[str, Any], model: str, digest: str) -> dict[str, 
         ),
         None,
     )
+
+
+def _model_by_name(data: dict[str, Any], model: str) -> dict[str, Any] | None:
+    models = data.get("models") or []
+    return next(
+        (
+            item
+            for item in models
+            if isinstance(item, dict) and (item.get("name") == model or item.get("model") == model)
+        ),
+        None,
+    )
+
+
+def _registry_manifest_url(model: str) -> str:
+    repository, separator, tag = model.rpartition(":")
+    if not separator:
+        repository, tag = model, "latest"
+    if "/" not in repository:
+        repository = f"library/{repository}"
+    return f"https://registry.ollama.ai/v2/{repository}/manifests/{tag}"
+
+
+def _registry_digest(model: str) -> str:
+    request = Request(
+        _registry_manifest_url(model),
+        method="HEAD",
+        headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
+    )
+    with urlopen(request, timeout=30) as response:
+        return str(response.headers.get("Ollama-Content-Digest") or "")
+
+
+def _validate_model(model_data: dict[str, Any], model: str, digest: str) -> None:
+    actual_digest = str(model_data.get("digest") or "")
+    if actual_digest != digest:
+        raise RuntimeError(f"Model digest mismatch for {model}: expected {digest}, got {actual_digest or 'unknown'}")
+    quantization = str((model_data.get("details") or {}).get("quantization_level") or "")
+    if quantization.upper() != "Q4_K_M":
+        raise RuntimeError(f"Model quantization mismatch: expected Q4_K_M, got {quantization or 'unknown'}")
+
+
+def _ensure_model_installed(base_url: str, model: str, digest: str) -> None:
+    tags_data = _json_request(f"{base_url}/api/tags")
+    current = _model_by_name(tags_data, model)
+    if current is not None and str(current.get("digest") or "") == digest:
+        _validate_model(current, model, digest)
+        print(f"Pinned Ollama model already installed; skipping registry lookup and pull: {model}")
+        return
+
+    registry_digest = _registry_digest(model)
+    if registry_digest != digest:
+        raise RuntimeError(
+            f"Registry model digest changed for {model}: expected {digest}, got {registry_digest or 'unknown'}"
+        )
+
+    print(f"Downloading pinned Ollama model through the existing local API: {model}")
+    pull_timeout = float(os.getenv("OLLAMA_PULL_TIMEOUT_SECONDS", "3600"))
+    pull_result = _json_request(
+        f"{base_url}/api/pull",
+        payload={"model": model, "stream": False},
+        timeout=pull_timeout,
+    )
+    if pull_result.get("error"):
+        raise RuntimeError(f"Ollama model pull failed: {pull_result['error']}")
+
+    installed = _model_by_name(_json_request(f"{base_url}/api/tags"), model)
+    if installed is None:
+        raise RuntimeError(f"Ollama model was not present after pull: {model}")
+    _validate_model(installed, model, digest)
 
 
 def _keep_alive_value(value: str) -> str | int:
@@ -97,6 +167,7 @@ def verify(
     *,
     smoke: bool = False,
     ensure_loaded: bool = False,
+    pull_if_missing: bool = False,
 ) -> None:
     base_url = base_url.rstrip("/")
     version_data = _json_request(f"{base_url}/api/version")
@@ -104,20 +175,14 @@ def verify(
     if actual_version != version:
         raise RuntimeError(f"Ollama version mismatch: expected {version}, got {actual_version or 'unknown'}")
 
+    if pull_if_missing:
+        _ensure_model_installed(base_url, model, digest)
+
     tags_data = _json_request(f"{base_url}/api/tags")
-    models = tags_data.get("models") or []
-    match = next(
-        (item for item in models if isinstance(item, dict) and (item.get("name") == model or item.get("model") == model)),
-        None,
-    )
+    match = _model_by_name(tags_data, model)
     if match is None:
         raise RuntimeError(f"Pinned Ollama model is not installed: {model}")
-    actual_digest = str(match.get("digest") or "")
-    if actual_digest != digest:
-        raise RuntimeError(f"Model digest mismatch for {model}: expected {digest}, got {actual_digest or 'unknown'}")
-    quantization = str((match.get("details") or {}).get("quantization_level") or "")
-    if quantization.upper() != "Q4_K_M":
-        raise RuntimeError(f"Model quantization mismatch: expected Q4_K_M, got {quantization or 'unknown'}")
+    _validate_model(match, model, digest)
 
     timeout = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
     keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "-1")
@@ -159,6 +224,11 @@ def main() -> int:
     parser.add_argument("--digest", default=os.getenv("OLLAMA_MODEL_DIGEST", DEFAULT_DIGEST))
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
+        "--pull-if-missing",
+        action="store_true",
+        help="Pull the pinned model through the active Ollama API only when it is absent or has the wrong digest.",
+    )
+    parser.add_argument(
         "--ensure-loaded",
         action="store_true",
         help="Keep the exact pinned model resident, preloading it only when needed.",
@@ -172,6 +242,7 @@ def main() -> int:
             args.digest,
             smoke=args.smoke,
             ensure_loaded=args.ensure_loaded,
+            pull_if_missing=args.pull_if_missing,
         )
     except Exception as exc:
         print(f"Ollama verification failed: {exc}", file=sys.stderr)

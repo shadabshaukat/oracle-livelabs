@@ -54,7 +54,7 @@ Primary persistence is **PostgreSQL + pgvector** (no Redis/Valkey dependency).
 - `search-app/start.sh`
   - starts `run.sh` in background
   - writes PID to `storage/searchapp.pid`
-  - logs to `storage/logs/searchapp.log`
+  - logs to `$HOME/.oracle-livelabs/search-app/logs/searchapp.log` by default
 - `search-app/stop.sh`
   - kills PID from pidfile
 
@@ -238,20 +238,21 @@ Most important env groups from `.env.example`:
 5. **Upload controls**: size limit, extensions, file count per space
 6. **Image pipeline**: image model + caption + OCR toggles
 7. **Storage backend**: `local|oci|s3|both` + provider credentials
-8. **LLM provider**: `none|openai|oci`
+8. **LLM provider**: `ollama` by default; `none|openai|oci|bedrock` are explicit alternatives
 9. **SQL controls**: row caps, memory turns, agentic retries, persistent memory toggle
 10. **Deep Research controls**: time budget, top_k, confidence thresholds, followups, memory rollup
 
 Additional notes from this scan:
 - `.env.example` includes OCR, image captioning, and persistent memory flags that materially affect UI feature toggles.
-- `LLM_PROVIDER` controls whether RAG answers are synthesized (OCI/OpenAI) or remain context-only.
+- `LLM_PROVIDER` defaults to local Ollama; OCI/OpenAI/Bedrock are used only when explicitly selected.
 - `STORAGE_BACKEND` controls local vs object storage persistence (see storage behavior below).
 
 ### Storage backend behavior (local vs object storage)
 - Uploads always write a **local file** for ingestion.
-- When `STORAGE_BACKEND=local`: files persist under `storage/uploads/...` and remain on disk.
-- When `STORAGE_BACKEND=oci` or `s3`: uploads are sent to object storage **and** written to a local **temp** path under `storage/tmp_uploads/...` for ingestion; the local temp file is used for parsing and can be removed if `DELETE_UPLOADED_FILES=true`.
-- When `STORAGE_BACKEND=both`: uploads are stored in object storage and **also** persisted locally under `storage/uploads/...`.
+- When `STORAGE_BACKEND=local` (default): files persist under `$HOME/.oracle-livelabs/search-app/uploads/...` and remain on disk.
+- When `STORAGE_BACKEND=oci` or `s3`: uploads use object storage **and** a local ingestion path under `$HOME/.oracle-livelabs/search-app/tmp_uploads/...`; the local temp file can be removed if `DELETE_UPLOADED_FILES=true`.
+- When `STORAGE_BACKEND=both`: uploads are stored in the explicitly selected object provider and also persisted under the configured home `UPLOAD_DIR`.
+- Ambient cloud credentials and legacy database object references never enable OCI/S3 while the current backend is `local`.
 - If extraction fails and an object reference exists, ingestion retries by downloading the object from storage and re-parsing.
 - PDF OCR fallback runs against the **local ingest file** (temp or persistent), so it follows the same storage backend behavior above and relies on the local copy created during upload.
 - Image assets (including PDF page images) upload their **full image + thumbnail** to object storage when `STORAGE_BACKEND` is `oci`, `s3`, or `both`, and thumbnail endpoints fall back to object storage when local files are missing.
@@ -538,7 +539,7 @@ This session is now ready for targeted code and UI/UX change requests.
 ### PDF OCR fallback + image extraction
 - **Config flags** added: `OCR_PDF` and `PDF_IMAGE_EXTRACTION` (both documented in `.env`/`.env.example`).
 - `text_utils.py` now performs OCR fallback on PDFs when enabled, rasterizing pages via PyMuPDF and using the existing OCR pipeline.
-- `store.py` extracts a **single first-page PDF image** (thumbnail) and ingests it into `image_assets` when enabled (writes a JPEG under `storage/uploads/pdf_pages/<pdf_stem>/`).
+- `store.py` extracts a **single first-page PDF image** (thumbnail) and ingests it into `image_assets` when enabled (writes under `UPLOAD_DIR/pdf_pages/<pdf_stem>/`).
 - Document metadata includes `pdf_image_count` and `pdf_image_extraction_enabled`; Vision model unavailability is logged as a warning.
 - **Notes**: requires Tesseract installed for OCR; uses PyMuPDF for rendering (already in `pdf` extra).
   - OCR still runs **per page** for text extraction; only the thumbnail upload is limited to the first page to avoid object-storage bloat.
@@ -1813,3 +1814,49 @@ Now go go go
 - PDF OCR is now a sparse-text fallback instead of being appended to good native text.
 - Clean verification command:
   `CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh`, followed by `./start.sh` and PDF RAG E2E checks.
+
+## 32) Parallel macOS application bootstrap (2026-07-07)
+
+- `run.sh` dispatches Darwin before evaluating Linux-only commands; the proven Linux body remains unchanged.
+- `run_macos.sh` and `bootstrap_macos.sh` support Apple Silicon macOS 14+ using user-home runtime files under
+  `$HOME/.oracle-livelabs/search-app/runtime/macos/` and no sudo/Homebrew dependency.
+- uv 0.11.27 and universal Ollama 0.31.1 Darwin archives are SHA-256 pinned in `deploy/versions.env`; managed
+  Python 3.14.6 and all 100 application packages use the same committed universal `uv.lock`.
+- macOS reuses a compatible running or installed Ollama without replacing it. A checksum-pinned, headless,
+  home-local server is installed only when no Ollama exists. Ready, unloaded, and missing-model states retain the
+  same exact model-digest semantics as Linux.
+- Intel macOS fails before mutation because pinned PyTorch 2.12.1 has no Intel Darwin wheel. A separate dependency
+  line is required before Intel can be claimed as a full-platform target.
+- Firewall rules are not mutated. Ollama requires none on loopback; app port 8000 exposure is deployment-specific.
+- PostgreSQL/pgvector remains external to the Python application bootstrap. Native Tesseract is optional for OCR.
+
+## 33) Home-local storage and strict cloud opt-in (2026-07-07)
+
+- `STORAGE_BACKEND=local` remains the default on Linux and macOS. `LLM_PROVIDER=ollama` remains the default
+  inference provider.
+- The default writable root is now `$HOME/.oracle-livelabs/search-app`. Uploads, model caches, logs, locks/PID
+  files, and the portable macOS runtime live below that root, independent of the clone location.
+- Every run checks the configured directories. Missing directories are created with private defaults; existing
+  directories, permissions, and contents are left unchanged. Explicit path overrides remain authoritative.
+- OCI Object Storage, S3, and hosted LLM providers are never inferred from ambient credentials. Object storage
+  requires an explicit backend/provider/bucket selection, and OCI GenAI requires `LLM_PROVIDER=oci` plus its
+  endpoint/model/authentication configuration.
+- Local mode also blocks object-store construction for legacy database rows containing persisted OCI/S3 object
+  identifiers, preventing an implicit cloud read after switching back to local storage.
+- Ollama lifecycle remains idempotent: Linux repairs its pinned managed runtime; macOS leaves an existing
+  compatible installation unchanged and installs the pinned fallback only when absent. Both pull the exact model
+  only when absent/invalid, load it only when not resident, and leave the ready service/model untouched.
+
+## 34) Reuse existing macOS Ollama (2026-07-07)
+
+- A healthy local Ollama API is reused first, regardless of whether it came from Ollama.app, Homebrew, PATH, or a
+  previous application-managed fallback. Its installation and normal model directory are not replaced.
+- If the API is stopped, discovery checks explicit `OLLAMA_CLI_PATH`, Ollama.app, PATH/Homebrew, and finally the
+  managed fallback, then starts the discovered CLI headlessly.
+- If Ollama is absent, the official checksum-pinned Darwin archive is installed under the user's application
+  home. Homebrew and sudo are not installed or required.
+- A missing/wrong model is pulled through the active server's official `/api/pull` endpoint only after registry
+  digest verification. An unloaded model is loaded; a resident exact model is untouched.
+- Existing Ollama versions are accepted only when the required APIs, exact model digest/quantization, 8K context,
+  loopback listener, and smoke inference pass. Incompatible installations are left unchanged with upgrade advice.
+- Linux startup and systemd behavior are unchanged.

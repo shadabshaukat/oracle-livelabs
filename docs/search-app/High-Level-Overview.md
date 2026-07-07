@@ -22,7 +22,7 @@ Repo structure and roles
 
   - pyproject.toml: Python 3.14.6 exactly, with FastAPI, uvicorn, psycopg3 + pool, sentence-transformers, OCI SDK, Jinja2, CPU-only PyTorch, and optional extras (pymupdf, pdfplumber). Deployments use the exact interpreter pinned in `.python-version`. Entrypoint script: searchapp -> app.main:main.
 
-  - run.sh: Idempotent runner that installs missing pinned Linux runtime/model components on first use, preloads an installed-but-unloaded Ollama model, syncs the committed lock with PDF/image extras, then starts the app without re-resolving dependencies.
+  - run.sh: OS dispatcher and idempotent runner. Linux retains its exact pinned systemd path. Apple Silicon macOS 14+ reuses an existing compatible Ollama and installs the checksum-pinned home-local fallback only when none exists. Both preload only an installed-but-unloaded model and sync the committed lock.
 
   - .env.example: Full set of knobs (DB, security, embeddings, pgvector, FTS, storage backend local/oci/both with bucket name, LLM provider and OCI credentials, chunking sizes). Note: contains placeholder DB credentials – change before real use.
 
@@ -50,7 +50,7 @@ Repo structure and roles
 
     - DB via DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD, plus pool sizes and sslmode.
     - Embeddings model/dim/batch, pgvector metric/lists/probes, FTS config.
-    - Storage: local/oci/both, paths (storage/uploads), max upload size, delete_uploaded_after_ingest, OCI bucket and credentials.
+    - Storage: local by default under `$HOME/.oracle-livelabs/search-app`, with OCI/S3 enabled only through explicit backend configuration.
     - LLM: provider ollama|openai|oci|bedrock|none. Ollama defaults to loopback with a pinned Q4_K_M Granite model; hosted-provider credentials are optional.
 
   - app/db.py: psycopg3 pool and idempotent DB init:
@@ -85,7 +85,7 @@ Repo structure and roles
   - app/store.py: File storage and ingestion
 
     - ensure_dirs() creates data/uploads/model cache paths.
-    - save_upload(): writes local file under storage/uploads/YYYY/MM/DD/HHMMSS/ (or temp when oci-only), optionally uploads to OCI Object Storage (using either config-file or API key env auth), returns (local_path, object_url|None).
+    - save_upload(): writes under the configured home `UPLOAD_DIR` (or `DATA_DIR/tmp_uploads` for object-only ingestion), and contacts object storage only when explicitly enabled.
     - save_upload_stream(): supports streaming to OCI (UploadManager.upload_stream) and local copy for ingestion; not currently wired into the /api/upload endpoint.
     - insert_document(), insert_chunks() using executemany with vector literal casting (::vector).
     - ingest_file_path(): read/extract text, chunk, embed, and persist in a transaction; returns document_id and number of chunks.
@@ -157,10 +157,10 @@ Configuration and deployment
     - BASIC_AUTH_USER/BASIC_AUTH_PASSWORD – change defaults.
     - EMBEDDING_MODEL and EMBEDDING_DIM must match (MiniLM-L6-v2 -> 384).
     - PGVECTOR_*: metric, lists (for dataset size), probes.
-    - STORAGE_BACKEND: local|oci|both; OCI_OS_BUCKET_NAME required for oci/both and OCI credentials available.
+    - STORAGE_BACKEND: local|oci|s3|both (default local); object provider, bucket, and credentials are mandatory for opt-in object modes.
     - LLM_PROVIDER: ollama by default; OLLAMA_BASE_URL, exact OLLAMA_MODEL/digest, timeout/context controls. OCI/OpenAI/Bedrock remain opt-in.
 
-  - Run: `./run.sh` performs first-use setup and launches the app (available at [http://0.0.0.0:8000](http://0.0.0.0:8000)); use `./start.sh` for later background starts. Ollama listens only on 127.0.0.1:11434 and must not receive a public ingress rule.
+  - Run: `./run.sh` detects supported Linux or Apple Silicon macOS, performs first-use setup, and launches the app (available at [http://0.0.0.0:8000](http://0.0.0.0:8000)); use `./start.sh` for background starts. Ollama listens only on 127.0.0.1:11434 and must not receive a public ingress rule. A reachable PostgreSQL/pgvector database remains required.
 
 - Infrastructure:
 

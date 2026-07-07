@@ -10,8 +10,12 @@ if [ -f .env ]; then
   set +a
 fi
 
-LOG_DIR="storage/logs"
-PID_FILE="storage/searchapp.pid"
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
+
+LOG_DIR="$SEARCHAPP_LOG_DIR"
+PID_FILE="$SEARCHAPP_RUN_DIR/searchapp.pid"
 LOG_FILE="$LOG_DIR/searchapp.log"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/api/ready}"
 

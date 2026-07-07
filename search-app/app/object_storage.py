@@ -184,9 +184,13 @@ def resolve_object_provider() -> Optional[str]:
 
 
 def get_object_store(provider: Optional[str] = None) -> Optional[ObjectStore]:
-    provider = (provider or resolve_object_provider() or "").lower()
-    if not provider:
+    # Current configuration is authoritative. Persisted object metadata must
+    # never reactivate OCI/S3 while the application is in local-only mode.
+    enabled_provider = resolve_object_provider()
+    requested_provider = (provider or enabled_provider or "").lower()
+    if not enabled_provider or requested_provider != enabled_provider:
         return None
+    provider = enabled_provider
     if provider in _STORE_CACHE:
         return _STORE_CACHE[provider]
     if provider == "oci":
@@ -200,7 +204,11 @@ def get_object_store(provider: Optional[str] = None) -> Optional[ObjectStore]:
 
 
 def default_object_bucket(provider: Optional[str] = None) -> Optional[str]:
-    provider = (provider or resolve_object_provider() or "").lower()
+    enabled_provider = resolve_object_provider()
+    requested_provider = (provider or enabled_provider or "").lower()
+    if not enabled_provider or requested_provider != enabled_provider:
+        return None
+    provider = enabled_provider
     if provider == "oci":
         return settings.oci_os_bucket_name
     if provider == "s3":

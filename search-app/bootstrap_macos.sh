@@ -3,8 +3,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
 # shellcheck source=deploy/versions.env
 . ./deploy/versions.env
+
+
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
 unset UV_PYTHON_DOWNLOADS
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -44,15 +55,19 @@ if [ ! -x /usr/sbin/lsof ]; then
   exit 1
 fi
 
-RUNTIME_ROOT="$PWD/storage/runtime/macos"
+# shellcheck source=scripts/macos_ollama.sh
+. ./scripts/macos_ollama.sh
+
+RUNTIME_ROOT="$SEARCHAPP_RUNTIME_DIR/macos"
 UV_HOME="$RUNTIME_ROOT/uv/$UV_VERSION"
 UV_BIN="$UV_HOME/uv"
-OLLAMA_HOME="$RUNTIME_ROOT/ollama/$OLLAMA_VERSION"
-OLLAMA_BIN="$OLLAMA_HOME/ollama"
+PINNED_OLLAMA_VERSION=$OLLAMA_VERSION
+MANAGED_OLLAMA_HOME="$RUNTIME_ROOT/ollama/$PINNED_OLLAMA_VERSION"
+MANAGED_OLLAMA_BIN="$MANAGED_OLLAMA_HOME/ollama"
 OLLAMA_MODELS_DIR="$RUNTIME_ROOT/models"
 OLLAMA_PID_FILE="$RUNTIME_ROOT/ollama.pid"
-OLLAMA_LOG_FILE="$PWD/storage/logs/ollama-macos.log"
-mkdir -p "$RUNTIME_ROOT" "$PWD/storage/logs" "$OLLAMA_MODELS_DIR"
+OLLAMA_LOG_FILE="$SEARCHAPP_LOG_DIR/ollama-macos.log"
+mkdir -p "$RUNTIME_ROOT" "$OLLAMA_MODELS_DIR"
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -115,20 +130,10 @@ if [ "$("$PYTHON_BIN" -c 'import platform; print(platform.python_version())')" !
   exit 1
 fi
 
-ollama_cli_version() {
-  if [ ! -x "$OLLAMA_BIN" ]; then
-    return 1
-  fi
-  "$OLLAMA_BIN" --version 2>&1 \
-    | awk '/version is/ || /client version is/ {print $NF}' \
-    | tail -n 1
-}
-
-OLLAMA_ACTUAL_VERSION=$(ollama_cli_version || true)
-if [ "${FORCE_OLLAMA_REINSTALL:-0}" = "1" ] || [ "$OLLAMA_ACTUAL_VERSION" != "$OLLAMA_VERSION" ]; then
+install_managed_ollama() {
   OLLAMA_ARCHIVE="$TMP_DIR/ollama-darwin.tgz"
   download_verified \
-    "https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION/ollama-darwin.tgz" \
+    "https://github.com/ollama/ollama/releases/download/v$PINNED_OLLAMA_VERSION/ollama-darwin.tgz" \
     "$OLLAMA_ARCHIVE" \
     "$OLLAMA_MACOS_UNIVERSAL_SHA256"
   mkdir -p "$TMP_DIR/ollama"
@@ -142,120 +147,91 @@ if [ "${FORCE_OLLAMA_REINSTALL:-0}" = "1" ] || [ "$OLLAMA_ACTUAL_VERSION" != "$O
       | awk '/version is/ || /client version is/ {print $NF}' \
       | tail -n 1
   )
-  if [ "$ARCHIVE_VERSION" != "$OLLAMA_VERSION" ]; then
+  if [ "$ARCHIVE_VERSION" != "$PINNED_OLLAMA_VERSION" ]; then
     echo "Ollama archive version verification failed." >&2
     exit 1
   fi
-  rm -rf -- "$OLLAMA_HOME"
-  mkdir -p "$(dirname "$OLLAMA_HOME")"
-  mv "$TMP_DIR/ollama" "$OLLAMA_HOME"
+  rm -rf -- "$MANAGED_OLLAMA_HOME"
+  mkdir -p "$(dirname "$MANAGED_OLLAMA_HOME")"
+  mv "$TMP_DIR/ollama" "$MANAGED_OLLAMA_HOME"
+  echo "Installed self-contained Ollama $PINNED_OLLAMA_VERSION under the application home; Homebrew was not required."
+}
+
+OLLAMA_BASE_URL_EFFECTIVE=${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+OLLAMA_BASE_URL_EFFECTIVE=${OLLAMA_BASE_URL_EFFECTIVE%/}
+
+API_VERSION=$(searchapp_macos_ollama_api_version "$OLLAMA_BASE_URL_EFFECTIVE" "$PYTHON_BIN" || true)
+SELECTED_OLLAMA_BIN=""
+OLLAMA_SOURCE="running local API"
+
+if [ -n "$API_VERSION" ]; then
+  searchapp_macos_loopback_listener_is_safe || {
+    echo "Existing Ollama must listen only on loopback port 11434; it was left unchanged." >&2
+    exit 1
+  }
+  echo "Reusing the existing macOS Ollama API (version $API_VERSION); no installation change was made."
 else
-  echo "Pinned Ollama $OLLAMA_VERSION already installed in the project runtime; skipping download."
-fi
-
-api_version() {
-  curl -fsS http://127.0.0.1:11434/api/version 2>/dev/null \
-    | "$PYTHON_BIN" -c 'import json, sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null
-}
-
-owned_ollama_pid() {
-  local pid command_line
-  [ -f "$OLLAMA_PID_FILE" ] || return 1
-  pid=$(sed -n '1p' "$OLLAMA_PID_FILE" 2>/dev/null || true)
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 1
-  command_line=$(ps -p "$pid" -o command= 2>/dev/null || true)
-  case "$command_line" in
-    *"$RUNTIME_ROOT/ollama/"*" serve"*) printf '%s\n' "$pid" ;;
-    *) return 1 ;;
-  esac
-}
-
-stop_owned_ollama() {
-  local pid
-  pid=$(owned_ollama_pid || true)
-  [ -n "$pid" ] || return 0
-  kill "$pid" 2>/dev/null || true
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || break
-    sleep 0.5
-  done
-  rm -f -- "$OLLAMA_PID_FILE"
-}
-
-API_VERSION=$(api_version || true)
-if [ -n "$API_VERSION" ] && [ "$API_VERSION" != "$OLLAMA_VERSION" ]; then
-  if owned_ollama_pid >/dev/null 2>&1; then
-    stop_owned_ollama
-    API_VERSION=""
-  else
-    echo "Port 11434 is occupied by Ollama $API_VERSION, but this build pins $OLLAMA_VERSION." >&2
-    echo "Quit the other Ollama instance and rerun ./run.sh; it will not be killed automatically." >&2
+  if [ -n "${OLLAMA_CLI_PATH:-}" ] && [ ! -x "$OLLAMA_CLI_PATH" ]; then
+    echo "OLLAMA_CLI_PATH is not executable: $OLLAMA_CLI_PATH" >&2
     exit 1
   fi
-fi
+  SELECTED_OLLAMA_BIN=$(searchapp_macos_find_ollama_cli "$MANAGED_OLLAMA_BIN" || true)
+  if [ -z "$SELECTED_OLLAMA_BIN" ]; then
+    echo "No existing macOS Ollama installation was found; installing the pinned self-contained fallback."
+    install_managed_ollama
+    SELECTED_OLLAMA_BIN=$MANAGED_OLLAMA_BIN
+    OLLAMA_SOURCE="managed fallback"
+  else
+    OLLAMA_SOURCE="existing installation"
+    SELECTED_CLI_VERSION=$(searchapp_macos_ollama_cli_version "$SELECTED_OLLAMA_BIN" || true)
+    echo "Reusing existing macOS Ollama CLI: $SELECTED_OLLAMA_BIN${SELECTED_CLI_VERSION:+ (version $SELECTED_CLI_VERSION)}"
+    if [ "${FORCE_OLLAMA_REINSTALL:-0}" = "1" ] && [ "$SELECTED_OLLAMA_BIN" = "$MANAGED_OLLAMA_BIN" ]; then
+      echo "Refreshing only the app-managed fallback because FORCE_OLLAMA_REINSTALL=1."
+      install_managed_ollama
+    elif [ "${FORCE_OLLAMA_REINSTALL:-0}" = "1" ]; then
+      echo "FORCE_OLLAMA_REINSTALL does not replace external macOS Ollama; leaving it unchanged."
+    fi
+  fi
 
-if [ -z "$API_VERSION" ]; then
-  stop_owned_ollama
-  echo "Starting the pinned project-local Ollama service..."
-  env \
-    HOME="$HOME" \
-    OLLAMA_HOST=127.0.0.1:11434 \
-    OLLAMA_MODELS="$OLLAMA_MODELS_DIR" \
-    OLLAMA_NO_CLOUD=1 \
-    OLLAMA_NUM_PARALLEL=1 \
-    OLLAMA_MAX_LOADED_MODELS=1 \
-    OLLAMA_CONTEXT_LENGTH="$OLLAMA_NUM_CTX" \
-    OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
-    nohup "$OLLAMA_BIN" serve >> "$OLLAMA_LOG_FILE" 2>&1 < /dev/null &
-  printf '%s\n' "$!" > "$OLLAMA_PID_FILE"
+  searchapp_macos_start_ollama \
+    "$SELECTED_OLLAMA_BIN" \
+    "$MANAGED_OLLAMA_BIN" \
+    "$OLLAMA_MODELS_DIR" \
+    "$OLLAMA_PID_FILE" \
+    "$OLLAMA_LOG_FILE"
+
   WAIT_COUNT=0
   while [ "$WAIT_COUNT" -lt 60 ]; do
-    API_VERSION=$(api_version || true)
-    [ "$API_VERSION" = "$OLLAMA_VERSION" ] && break
+    API_VERSION=$(searchapp_macos_ollama_api_version "$OLLAMA_BASE_URL_EFFECTIVE" "$PYTHON_BIN" || true)
+    [ -n "$API_VERSION" ] && break
     sleep 1
     WAIT_COUNT=$((WAIT_COUNT + 1))
   done
 fi
-if [ "$(api_version || true)" != "$OLLAMA_VERSION" ]; then
-  echo "Ollama API version verification failed. See $OLLAMA_LOG_FILE" >&2
+
+if [ -z "$API_VERSION" ]; then
+  echo "Existing Ollama could not start its local API. It was not replaced; see $OLLAMA_LOG_FILE" >&2
   exit 1
 fi
 
-LISTENERS=$(/usr/sbin/lsof -nP -iTCP:11434 -sTCP:LISTEN 2>/dev/null || true)
-ADDRESSES=$(printf '%s\n' "$LISTENERS" | awk 'NR > 1 {print $9}')
-if [ -z "$ADDRESSES" ] || printf '%s\n' "$ADDRESSES" | grep -Ev '^(127\.0\.0\.1|\[::1\]):11434$' >/dev/null; then
-  echo "Ollama must listen only on loopback port 11434; no firewall exception is allowed." >&2
+searchapp_macos_loopback_listener_is_safe || {
+  echo "Ollama must listen only on loopback port 11434; the existing installation was left unchanged." >&2
   exit 1
-fi
+}
 
+# The fallback installer remains pinned, but an existing macOS Ollama version
+# is accepted as-is when its stable local APIs and the exact model work.
+export OLLAMA_VERSION=$API_VERSION
 if ! "$PYTHON_BIN" scripts/verify_ollama.py \
-    --base-url http://127.0.0.1:11434 >/dev/null 2>&1; then
-  REGISTRY_DIGEST=$(
-    curl --proto '=https' --tlsv1.2 -fsSI \
-      -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-      "https://registry.ollama.ai/v2/ibm/granite4/manifests/1b-q4_K_M" \
-      | tr -d '\r' \
-      | awk 'tolower($1) == "ollama-content-digest:" {print $2}'
-  )
-  if [ "$REGISTRY_DIGEST" != "$OLLAMA_MODEL_DIGEST" ]; then
-    echo "Registry model digest changed; refusing to pull mutable tag $OLLAMA_MODEL." >&2
-    exit 1
-  fi
-  OLLAMA_HOST=http://127.0.0.1:11434 "$OLLAMA_BIN" rm "$OLLAMA_MODEL" >/dev/null 2>&1 || true
-  OLLAMA_HOST=http://127.0.0.1:11434 "$OLLAMA_BIN" pull "$OLLAMA_MODEL"
-else
-  echo "Pinned Ollama model already installed; skipping registry lookup and pull."
-fi
-if ! "$PYTHON_BIN" scripts/verify_ollama.py --base-url http://127.0.0.1:11434; then
-  OLLAMA_HOST=http://127.0.0.1:11434 "$OLLAMA_BIN" rm "$OLLAMA_MODEL" >/dev/null 2>&1 || true
-  echo "Removed model after failed digest verification." >&2
+    --base-url "$OLLAMA_BASE_URL_EFFECTIVE" \
+    --version "$API_VERSION" \
+    --pull-if-missing \
+    --ensure-loaded \
+    --smoke; then
+  echo "The existing Ollama version $API_VERSION is incompatible with the required model/API workflow." >&2
+  echo "It was left unchanged. Upgrade it manually or set OLLAMA_CLI_PATH to a compatible installation." >&2
   exit 1
 fi
-"$PYTHON_BIN" scripts/verify_ollama.py \
-  --base-url http://127.0.0.1:11434 \
-  --ensure-loaded \
-  --smoke
 
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -275,5 +251,5 @@ export UV_PYTHON_DOWNLOADS=never
 if ! command -v tesseract >/dev/null 2>&1; then
   echo "Optional OCR notice: Tesseract is not installed; non-OCR search/RAG remains available."
 fi
-echo "macOS bootstrap complete: uv $UV_VERSION, Python $PYTHON_VERSION, Ollama $OLLAMA_VERSION, $OLLAMA_MODEL."
-echo "Ollama is project-local and loopback-only on 127.0.0.1:11434; no firewall rule is required."
+echo "macOS bootstrap complete: uv $UV_VERSION, Python $PYTHON_VERSION, Ollama $API_VERSION ($OLLAMA_SOURCE), $OLLAMA_MODEL."
+echo "Ollama is loopback-only on 127.0.0.1:11434; no Homebrew dependency or firewall rule is required."

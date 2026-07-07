@@ -29,10 +29,20 @@ load_environment() {
   . ./deploy/versions.env
 }
 
+if [ ! -f .env ]; then
+  cp .env.example .env
+  chmod 0600 .env
+  echo "Created .env from the safe example; configure PostgreSQL and application secrets before starting."
+fi
 load_environment
 
-mkdir -p storage
-LOCK_DIR="$PWD/storage/searchapp.macos.run.lock"
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
+# shellcheck source=scripts/macos_ollama.sh
+. ./scripts/macos_ollama.sh
+
+LOCK_DIR="$SEARCHAPP_RUN_DIR/searchapp.macos.run.lock"
 acquire_lock() {
   local owner=""
   if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -66,9 +76,8 @@ cleanup_lock() {
 acquire_lock
 trap cleanup_lock EXIT INT TERM
 
-RUNTIME_ROOT="$PWD/storage/runtime/macos"
+RUNTIME_ROOT="$SEARCHAPP_RUNTIME_DIR/macos"
 UV_BIN="$RUNTIME_ROOT/uv/$UV_VERSION/uv"
-OLLAMA_BIN="$RUNTIME_ROOT/ollama/$OLLAMA_VERSION/ollama"
 PYTHON_BIN=""
 BOOTSTRAP_RAN=0
 
@@ -101,53 +110,59 @@ if ! runtime_is_ready; then
   exit 1
 fi
 
-ollama_cli_is_ready() {
-  [ -x "$OLLAMA_BIN" ] || return 1
-  local actual_version
-  actual_version=$(
-    "$OLLAMA_BIN" --version 2>&1 \
-      | awk '/version is/ || /client version is/ {print $NF}' \
-      | tail -n 1
-  )
-  [ "$actual_version" = "$OLLAMA_VERSION" ]
-}
-
-loopback_listener_is_safe() {
-  local listeners addresses
-  listeners=$(/usr/sbin/lsof -nP -iTCP:11434 -sTCP:LISTEN 2>/dev/null || true)
-  [ -n "$listeners" ] || return 1
-  addresses=$(printf '%s\n' "$listeners" | awk 'NR > 1 {print $9}')
-  [ -n "$addresses" ] || return 1
-  ! printf '%s\n' "$addresses" | grep -Ev '^(127\.0\.0\.1|\[::1\]):11434$' >/dev/null
-}
-
 LLM_PROVIDER_EFFECTIVE=${LLM_PROVIDER:-ollama}
 OLLAMA_BASE_URL_EFFECTIVE=${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
 OLLAMA_BASE_URL_EFFECTIVE=${OLLAMA_BASE_URL_EFFECTIVE%/}
 
 case "$LLM_PROVIDER_EFFECTIVE" in
   [Oo][Ll][Ll][Aa][Mm][Aa])
+    OLLAMA_API_VERSION=$(searchapp_macos_ollama_api_version "$OLLAMA_BASE_URL_EFFECTIVE" "$PYTHON_BIN" || true)
     case "$OLLAMA_BASE_URL_EFFECTIVE" in
       http://127.0.0.1:11434|http://localhost:11434)
-        if ! ollama_cli_is_ready || ! curl -fsS "$OLLAMA_BASE_URL_EFFECTIVE/api/version" >/dev/null 2>&1; then
-          bootstrap_once "pinned Ollama $OLLAMA_VERSION or its local service is missing"
+        if [ -z "$OLLAMA_API_VERSION" ]; then
+          bootstrap_once "no running local Ollama API was found"
           runtime_is_ready
+          OLLAMA_API_VERSION=$(searchapp_macos_ollama_api_version "$OLLAMA_BASE_URL_EFFECTIVE" "$PYTHON_BIN" || true)
         fi
+        [ -n "$OLLAMA_API_VERSION" ] || {
+          echo "Ollama did not expose its local API after macOS setup." >&2
+          exit 1
+        }
+        searchapp_macos_loopback_listener_is_safe || {
+          echo "Existing Ollama must listen only on loopback port 11434; it was left unchanged." >&2
+          exit 1
+        }
         ;;
       *)
         echo "Using explicitly configured non-local Ollama endpoint: $OLLAMA_BASE_URL_EFFECTIVE"
+        [ -n "$OLLAMA_API_VERSION" ] || {
+          echo "Configured Ollama endpoint did not return an API version." >&2
+          exit 1
+        }
         ;;
     esac
 
+    # macOS adopts the existing server version while retaining exact model
+    # digest/quantization checks. Linux continues enforcing its pinned version.
+    export OLLAMA_VERSION=$OLLAMA_API_VERSION
+    echo "Using existing macOS Ollama version $OLLAMA_API_VERSION."
     if ! "$PYTHON_BIN" scripts/verify_ollama.py \
         --base-url "$OLLAMA_BASE_URL_EFFECTIVE" \
+        --version "$OLLAMA_API_VERSION" \
         --ensure-loaded; then
       case "$OLLAMA_BASE_URL_EFFECTIVE" in
         http://127.0.0.1:11434|http://localhost:11434)
-          bootstrap_once "the pinned Ollama model/runtime failed verification"
+          bootstrap_once "the required Ollama model is missing or incompatible"
           runtime_is_ready
+          OLLAMA_API_VERSION=$(searchapp_macos_ollama_api_version "$OLLAMA_BASE_URL_EFFECTIVE" "$PYTHON_BIN" || true)
+          [ -n "$OLLAMA_API_VERSION" ] || {
+            echo "Ollama API became unavailable after macOS setup." >&2
+            exit 1
+          }
+          export OLLAMA_VERSION=$OLLAMA_API_VERSION
           "$PYTHON_BIN" scripts/verify_ollama.py \
             --base-url "$OLLAMA_BASE_URL_EFFECTIVE" \
+            --version "$OLLAMA_API_VERSION" \
             --ensure-loaded
           ;;
         *)
@@ -159,7 +174,7 @@ case "$LLM_PROVIDER_EFFECTIVE" in
 
     case "$OLLAMA_BASE_URL_EFFECTIVE" in
       http://127.0.0.1:11434|http://localhost:11434)
-        loopback_listener_is_safe || {
+        searchapp_macos_loopback_listener_is_safe || {
           echo "Ollama must listen only on loopback port 11434; no firewall exception is permitted." >&2
           exit 1
         }

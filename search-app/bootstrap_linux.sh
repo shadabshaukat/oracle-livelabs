@@ -3,8 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
 # shellcheck source=deploy/versions.env
 . ./deploy/versions.env
+
+# shellcheck source=scripts/storage_env.sh
+. ./scripts/storage_env.sh
+searchapp_prepare_storage
 
 # A parent run.sh intentionally disables implicit interpreter downloads after
 # verification. Bootstrap is the one controlled place where the pinned Python
