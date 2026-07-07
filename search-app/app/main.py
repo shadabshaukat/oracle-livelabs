@@ -92,9 +92,9 @@ def on_startup():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "upload_max_mb": settings.max_upload_size_mb,
             "upload_max_files": settings.max_files_per_space,
             "upload_allowed_exts": settings.allowed_upload_extensions,
