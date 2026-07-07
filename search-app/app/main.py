@@ -1531,7 +1531,7 @@ async def llm_test(payload: Dict[str, Any] | None = None):
         answer = llm_chat(
             str(q),
             str(ctx),
-            max_tokens=256,
+            max_tokens=settings.rag_max_tokens,
             temperature=0.1,
             cache_answer=False,
         )
@@ -1812,6 +1812,9 @@ def llm_config():
         "ollama_model": settings.ollama_model,
         "ollama_model_digest": settings.ollama_model_digest,
         "ollama_num_ctx": settings.ollama_num_ctx,
+        "rag_max_tokens": settings.rag_max_tokens,
+        "rag_top_k": settings.rag_top_k,
+        "rag_max_context_chars": settings.rag_max_context_chars,
         "oci_region": settings.oci_region,
         "oci_genai_endpoint": settings.oci_genai_endpoint,
         "compartment_id_present": bool(settings.oci_compartment_id),

@@ -184,9 +184,11 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")  # ollama|none|openai|oci|bedrock
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "512"))
-    rag_top_k: int = int(os.getenv("RAG_TOP_K", "6"))
-    rag_max_context_chars: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "7000"))
+    # Detailed RAG defaults remain comfortably inside the 8K CPU runtime
+    # window: about 10K source characters plus up to 1,024 generated tokens.
+    rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "1024"))
+    rag_top_k: int = int(os.getenv("RAG_TOP_K", "8"))
+    rag_max_context_chars: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "10000"))
     rag_max_cosine_distance: float = float(os.getenv("RAG_MAX_COSINE_DISTANCE", "0.65"))
 
     # AWS Bedrock (optional)

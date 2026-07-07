@@ -23,9 +23,9 @@ def _rag_settings(**overrides):
     values = {
         "pgvector_metric": "cosine",
         "rag_max_cosine_distance": 0.65,
-        "rag_max_context_chars": 7000,
-        "rag_top_k": 6,
-        "rag_max_tokens": 512,
+        "rag_max_context_chars": 10000,
+        "rag_top_k": 8,
+        "rag_max_tokens": 1024,
         "llm_provider": "ollama",
     }
     values.update(overrides)
@@ -60,6 +60,7 @@ class OllamaClientTests(unittest.TestCase):
         self.assertEqual(payload["options"]["num_predict"], 123)
         self.assertEqual(payload["options"]["num_ctx"], 8192)
         self.assertIn("[Source 1]", payload["messages"][1]["content"])
+        self.assertIn("detailed, well-structured answer", payload["messages"][0]["content"])
 
     def test_ollama_failure_returns_none(self):
         post = Mock(side_effect=RuntimeError("offline"))
@@ -110,11 +111,11 @@ class RagTests(unittest.TestCase):
         self.assertEqual(answer, "grounded")
         self.assertTrue(used)
         self.assertEqual([hit.chunk_id for hit in returned], [1, 3])
-        self.assertLessEqual(len(captured["context"]), 7000)
+        self.assertLessEqual(len(captured["context"]), 10000)
         self.assertIn("[Source 1]", captured["context"])
         self.assertIn("[Source 2]", captured["context"])
         self.assertNotIn("DROP_ME", captured["context"])
-        self.assertEqual(retrieval.call_args.kwargs["top_k"], 6)
+        self.assertEqual(retrieval.call_args.kwargs["top_k"], 8)
 
     def test_rag_model_failure_never_returns_raw_context(self):
         body = "raw chunk body that must not become the answer"
