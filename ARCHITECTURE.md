@@ -14,8 +14,9 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Manages schema creation and index setup on startup.
    - Exposes API endpoints for text search, image search, Deep Research, SQL Search, search history, upload, library, and auth.
 
-3) **OCI Generative AI (Inference + Reasoning)**
-   - RAG synthesis uses OCI GenAI to answer from retrieved context.
+3) **Local Ollama (Inference + Reasoning)**
+   - RAG, Deep Research, memory summaries, LLM diagnostics, and NL2SQL use the shared provider client.
+   - The default is the pinned CPU-quantized `ibm/granite4:1b-q4_K_M` model served on loopback.
    - The LLM is not a primary store—only an inference engine on top of PostgreSQL results.
 
 4) **VM-hosted Image Models (Captioning + Embeddings)**
@@ -43,7 +44,8 @@ This document provides a full, in-depth view of the system architecture, focusin
 3) **Chunking**
    - `CHUNK_STRATEGY=recursive|sentence_pack`.
    - `sentence_pack`: paragraph → sentence → pack; fallback to recursive split on long sentences.
-   - `SENTENCE_SPLITTER=regex|nltk|spacy` (default NLTK).
+   - `SENTENCE_SPLITTER=regex|nltk|spacy` (default regex, avoiding mutable runtime downloads).
+   - Default chunks are 1,000 characters with 150-character overlap to remain within MiniLM's effective input window.
 
 4) **Embedding + Indexing**
    - SentenceTransformers produces normalized text embeddings.
@@ -69,8 +71,9 @@ This document provides a full, in-depth view of the system architecture, focusin
    - Reciprocal Rank Fusion merges semantic + full‑text rankings.
 
 4) **RAG**
-   - Hybrid results assembled into context.
-   - OCI GenAI called to synthesize an answer.
+   - Hybrid results are relevance-filtered, de-duplicated, capped at six, and assembled into numbered source blocks.
+   - Context is bounded before the local Ollama model synthesizes a grounded answer with source citations.
+   - If inference is unavailable, the API returns an explicit availability message and never exposes raw chunk dumps as an answer.
    - References include file name/type + object storage link if present.
 
 ## Deep Research Lifecycle
@@ -131,6 +134,7 @@ This document provides a full, in-depth view of the system architecture, focusin
 
 - Text embeddings model and image models are cached locally under `MODEL_CACHE_DIR` (default `storage/models`).
 - The app sets `HF_HOME`, `TRANSFORMERS_CACHE`, and `SENTENCE_TRANSFORMERS_HOME` to this directory and uses `cache_dir` for OpenCLIP to speed repeated loads.
+- The text embedding model is loaded at the immutable revision recorded in `deploy/versions.env`, matching existing stored vectors.
 - Models are loaded once per process via `lru_cache` to avoid reinitialization overhead.
 
 ## Security & Auth
@@ -151,7 +155,8 @@ This document provides a full, in-depth view of the system architecture, focusin
 ## Summary
 
 - **OCI PostgreSQL is the primary persistent AI store.**
-- **OCI GenAI is used only for inference/reasoning in RAG.**
+- **Ollama is the default inference engine and listens only on `127.0.0.1:11434`.**
+- **OCI GenAI/OpenAI/Bedrock remain optional compatibility providers, not defaults.**
 - **Image models (OpenCLIP + captioning) run on the VM/app host.**
 - **Both text and image lifecycles are fully indexable and queryable through PostgreSQL.**
 - **Valkey/Redis caches are removed; in-process LLM caching uses a TTL.**

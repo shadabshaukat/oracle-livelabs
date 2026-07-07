@@ -34,12 +34,19 @@ echo "Search app started (PID $PID). Logs: $LOG_FILE"
 
 if command -v curl >/dev/null 2>&1; then
   echo "Waiting for health check: $HEALTH_URL"
-  for _ in {1..20}; do
+  # A first start may be installing the pinned runtime/model via run.sh.
+  for _ in {1..300}; do
     if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
       echo "Search app is healthy."
       exit 0
     fi
-    sleep 0.5
+    if ! kill -0 "$PID" 2>/dev/null; then
+      echo "Search app startup failed. Recent log output:" >&2
+      tail -n 40 "$LOG_FILE" >&2 || true
+      rm -f "$PID_FILE"
+      exit 1
+    fi
+    sleep 1
   done
   echo "Warning: health check did not pass yet. Check logs: $LOG_FILE"
 else

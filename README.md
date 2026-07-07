@@ -11,7 +11,7 @@ This repository contains two related stacks that together deliver an enterprise 
 2) `search-app/` — Application stack
    - FastAPI backend + minimalist Jinja UI
    - Upload & ingestion of PDF/HTML/TXT/DOCX with robust parsing and chunking, vector embeddings, and full‑text indexing
-   - Multi‑mode retrieval: Semantic (pgvector), Full‑Text (tsvector), Hybrid (RRF fusion), and RAG (OpenAI or OCI GenAI)
+   - Multi‑mode retrieval: Semantic (pgvector), Full‑Text (tsvector), Hybrid (weighted RRF), and RAG with a local Ollama model by default
    - Deep Research (DR) sessions with notebook, follow-ups, and optional web search
    - SQL Search (NL2SQL), search history auditing, and persistent memory across text/SQL/DR
    - Dual storage backends for uploads: local file system and/or OCI Object Storage, with timestamped folder structure
@@ -97,8 +97,9 @@ For production, set additional variables as needed (see [docs/oci_postgres_tf_st
 The app can run anywhere that can reach the OCI PostgreSQL endpoint. You can run it on your workstation, on the optional Compute VM, or in a container VM.
 
 ### Prerequisites
-- Python 3.10+
-- `uv` package manager (https://docs.astral.sh/uv/)
+- Linux x86_64 or ARM64 host with systemd, 2-4 OCPUs, 8 GB RAM minimum, and outbound HTTPS during bootstrap
+- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
+- No preinstalled Python, uv, Ollama, or model is required; `run.sh` installs the pinned versions on first use
 
 ### Setup
 1) Prepare environment
@@ -112,7 +113,7 @@ cp .env.example .env
 Key environment variables (see `search-app/.env.example` and `docs/search-app/README.md` for a full list):
 - DB: `DATABASE_URL` or `DB_HOST/DB_NAME/DB_USER/DB_PASSWORD`, `DB_SSLMODE`
 - Security: `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD`
-- Embeddings: `EMBEDDING_MODEL`, `EMBEDDING_DIM`
+- Embeddings: `EMBEDDING_MODEL`, immutable `EMBEDDING_MODEL_REVISION`, `EMBEDDING_DIM`
 - pgvector: `PGVECTOR_METRIC`, `PGVECTOR_LISTS`, `PGVECTOR_PROBES`
 - Full‑Text: `FTS_CONFIG`
 - Storage backends:
@@ -120,24 +121,36 @@ Key environment variables (see `search-app/.env.example` and `docs/search-app/RE
   - `OCI_OS_BUCKET_NAME` (required when using `oci` or `both`)
   - OCI credentials (config file or API key envs) for Object Storage
 - RAG LLM provider:
-  - `LLM_PROVIDER=oci` or `openai`, with corresponding credentials
+  - Default: `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+  - Pinned CPU model: `ibm/granite4:1b-q4_K_M` (Q4_K_M, about 1 GB)
+  - OpenAI, OCI GenAI, and Bedrock remain optional compatibility providers
 - Persistent memory + DR:
   - `TEXT_PERSISTENT_MEMORY_ENABLED`, `SQL_PERSISTENT_MEMORY_ENABLED`, `IMAGE_PERSISTENT_MEMORY_ENABLED`, `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`
   - `PERSISTENT_MEMORY_TOP_K`, `PERSISTENT_MEMORY_MAX_CHARS`, `PERSISTENT_MEMORY_SUMMARY_MAX_CHARS`
 - LLM cache: `LLM_CACHE_TTL_SECONDS` (in-process cache)
 
-2) Install dependencies and run the app
+2) Run the app; the first run bootstraps the pinned runtime, local model, and dependencies
 ```bash
 ./run.sh
-# or
-uv sync --extra pdf
-uv run searchapp
 ```
 This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth credentials in `.env`.
 
+On later runs, `run.sh` skips installation and model download when the exact artifacts are already present. It
+checks Ollama's resident-model API and preloads the model only when it is installed but not currently in memory.
+Use `./start.sh` after initial setup when you want the same runner in the background.
+
+`search-app/uv.lock` pins the complete transitive package graph and distribution hashes. Commit changes to
+`pyproject.toml` and `uv.lock` together; use `uv lock --upgrade` only for a deliberate, tested dependency upgrade.
+`search-app/deploy/versions.env` separately pins uv, Python, Ollama, the quantized model digest, binary checksums,
+and the embedding-model revision. Linux uses PyTorch's CPU-only wheel index, so rebuilds do not install CUDA packages.
+
+Ollama is intentionally bound to `127.0.0.1:11434`. Do not open port 11434 in an OCI security list, NSG, or host
+firewall: the API is unauthenticated and the FastAPI process reaches it over loopback. Only the application port
+8000 should be allowed from trusted clients.
+
 ### Common Deployment Patterns
-- **Local dev**: run `uv sync` and `uv run searchapp`.
-- **VM (OCI Compute)**: copy repo + `.env`, run `./run.sh`, optionally set up systemd (see docs/search-app/README.md).
+- **Linux VM**: run `./run.sh`; it performs first-use setup and starts immediately on subsequent runs.
+- **Clean rebuild**: stop the app, then run `CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh`.
 - **Private DB access**: ensure the VM is in the same VCN/subnet or a peered network; allow 5432 only from trusted sources.
 
 ### Upload Behavior
@@ -160,7 +173,7 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 - Semantic (pgvector): cosine/L2/IP
 - Full‑Text: PostgreSQL FTS (GIN) with `ts_rank_cd`
 - Hybrid: Reciprocal Rank Fusion over semantic and full‑text results
-- RAG: Optional LLM synthesis using OpenAI or OCI GenAI
+- RAG: grounded local synthesis using Ollama by default, with numbered source citations and bounded context
 - SQL Search (NL2SQL) for analysts/admins
 - Deep Research for multi-step investigations
 
@@ -186,7 +199,8 @@ This starts the app at http://0.0.0.0:8000. Authenticate with the Basic Auth cre
 
 ## Troubleshooting
 - DB connectivity: verify `.env` values; `DB_SSLMODE` default is `require`
-- PDF extraction quality: set `USE_PYMUPDF=true` and ensure pdf extras are installed (`uv sync --extra pdf`)
+- PDF extraction quality: set `USE_PYMUPDF=true` and ensure pdf extras are installed (`uv sync --locked --extra pdf`)
+- Local model: `systemctl status ollama`, `journalctl -u ollama`, and `python scripts/verify_ollama.py --smoke`
 - Uploads to OCI: verify `STORAGE_BACKEND` and `OCI_OS_BUCKET_NAME`; ensure OCI credentials are available
 - Authentication: Basic Auth protects `/` and `/api`
 - Images not rendering: confirm `/api/image-assets/{image_id}/thumbnail` returns 200 and that you are logged in (session cookies).

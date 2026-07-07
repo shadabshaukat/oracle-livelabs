@@ -36,8 +36,8 @@ terraform apply plan.out
 ## 2) Application Deployment (search-app)
 
 ### Prerequisites
-- Python 3.10+
-- `uv` package manager
+- Linux x86_64 or ARM64 with systemd, 2-4 OCPUs, 8 GB RAM minimum, and at least 8 GB free disk
+- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
 - Access to OCI PostgreSQL endpoint
 
 ### Setup
@@ -49,28 +49,48 @@ cp .env.example .env
 
 Update `.env` with:
 - `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` (or `DATABASE_URL`)
-- `LLM_PROVIDER=oci` + OCI GenAI credentials
+- `LLM_PROVIDER=ollama` (default); the bootstrap installs the pinned local model
 - `STORAGE_BACKEND=local|oci|s3|both`
 - `OCI_OS_BUCKET_NAME` if using OCI storage
 - Upload limits: `MAX_UPLOAD_SIZE_MB` (per-file), `MAX_FILES_PER_SPACE`, `ALLOWED_UPLOAD_EXTENSIONS`
 - Deep Research + memory: `DEEP_RESEARCH_PERSISTENT_MEMORY_ENABLED`, `TEXT_PERSISTENT_MEMORY_ENABLED`, `SQL_PERSISTENT_MEMORY_ENABLED`, `IMAGE_PERSISTENT_MEMORY_ENABLED`
 - LLM cache: `LLM_CACHE_TTL_SECONDS` (in-process cache)
 
-### Install + Run
+### Reproducible First Run
 
 ```bash
-uv sync
-uv run searchapp
+./run.sh
 ```
 
 The app runs at **http://0.0.0.0:8000**.
+
+`run.sh` calls the bootstrap automatically when a pinned component is missing. The bootstrap verifies fixed
+SHA-256 checksums before installing uv 0.11.27 and Ollama 0.31.1, installs managed
+Python 3.14.6, verifies the immutable manifest digest for `ibm/granite4:1b-q4_K_M`, and performs
+`uv sync --locked` against the committed lockfile. It supports Linux x86_64 and ARM64 and fails closed on any
+binary, version, model, or digest mismatch.
+
+On a ready host, `run.sh` does not reinstall Ollama, restart its service, query the model registry, or pull the
+model. If the exact installed model is not listed by Ollama's resident-model API, it is preloaded with an
+indefinite keep-alive before FastAPI starts. Use `./start.sh` for background operation after initial setup.
+
+For a clean repeat of the exact build:
+
+```bash
+./stop.sh
+CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh
+./start.sh
+```
+
+The canonical pins are in `search-app/deploy/versions.env`; Python packages and artifact hashes are in
+`search-app/uv.lock`. Linux image dependencies use CPU-only PyTorch wheels and contain no CUDA runtime packages.
 
 ## 3) Image Model Requirements (VM Host)
 
 If you want image captioning + embeddings:
 
 ```bash
-uv sync --extra image
+uv sync --locked --python 3.14.6 --extra image
 ```
 
 These install:
@@ -99,12 +119,13 @@ These install:
 ```ini
 [Unit]
 Description=Enterprise Search App
-After=network.target
+Wants=ollama.service
+After=network.target ollama.service
 
 [Service]
 WorkingDirectory=/opt/search-app
 EnvironmentFile=/opt/search-app/.env
-ExecStart=/usr/bin/env uv run searchapp
+ExecStart=/opt/search-app/run.sh
 Restart=always
 
 [Install]
@@ -119,13 +140,13 @@ Assumptions:
 - **Compute VM**: E5.Flex, 2 OCPUs, 16 GB RAM, 250 GB boot volume.
 - **OCI PostgreSQL**: 2 OCPUs, 16 GB RAM, **300k IOPS** profile.
 - **Object Storage**: 100 GB data storage.
-- **OCI GenAI**: 10,000 API calls/month (mix of input/output tokens).
+- **Local inference**: Ollama + the 1 GB quantized Granite model on the Compute VM; no per-token API charge.
 
 Estimated monthly cost components:
 - **Compute VM** (2 OCPU/16 GB + 250 GB boot volume): *~$120–$250/month*
 - **OCI PostgreSQL** (2 OCPU/16 GB, 300k IOPS): *~$450–$900/month*
 - **Object Storage** (100 GB): *~$3–$6/month*
-- **OCI GenAI** (10k requests): *~$50–$200/month* (token-dependent)
+- **Local inference**: included in the Compute VM estimate (allow roughly 2 GB additional disk/RAM headroom).
 
 **Estimated total:** *~$620–$1,356/month* (approximate)
 
@@ -148,7 +169,7 @@ To refine this:
 ### Incident Response
 - **Search errors**: check DB connectivity + pgvector extension.
 - **Image search errors**: verify OpenCLIP deps and `/api/image-assets/{id}/thumbnail`.
-- **RAG errors**: verify OCI GenAI credentials and `/api/llm-test`.
+- **RAG errors**: run `systemctl status ollama`, `python scripts/verify_ollama.py --smoke`, then `/api/llm-test`.
 - **Deep Research tables missing**: run `psql "$DATABASE_URL" -f schema_v3.sql` or restart to let `app/db.py` create DR tables.
 
 ## Security Hardening Checklist
@@ -160,4 +181,5 @@ To refine this:
 - Enable HTTPS in front of FastAPI (NGINX/OCI LB).
 - Limit upload size (`MAX_UPLOAD_SIZE_MB` per file), validate file types, and cap per-space uploads (`MAX_FILES_PER_SPACE`).
 - Remove any Valkey/Redis configs; the platform is Postgres-only for persistence.
-- Enable OS-level firewall; only expose port 8000 via trusted networks.
+- Enable OS-level firewall; expose port 8000 only to trusted networks.
+- Never add ingress for Ollama port 11434. It is bound to loopback because the local API has no authentication.

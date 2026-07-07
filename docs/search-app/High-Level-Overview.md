@@ -3,7 +3,7 @@ High-level overview
 - The repository provides two complementary stacks:
 
   - Infrastructure: oci_postgres_tf_stack, a Terraform/Oracle Resource Manager (ORM) deployable module that provisions OCI networking, an OCI PostgreSQL DB System, optionally a Compute VM, and an Object Storage bucket for uploads.
-  - Application: search-app, a FastAPI service with a minimalist Jinja UI for document upload, ingestion (text extraction + chunking + embedding), and multi-mode retrieval (semantic with pgvector, full-text with PostgreSQL GIN, hybrid via RRF, and optional RAG using OCI GenAI or OpenAI). Security is via Basic Auth.
+  - Application: search-app, a FastAPI service with a minimalist Jinja UI for document upload, ingestion (text extraction + chunking + embedding), and multi-mode retrieval (semantic with pgvector, full-text with PostgreSQL GIN, weighted hybrid RRF, and RAG using a local Ollama model by default). Security is via Basic Auth.
   - Application: search-app also includes SQL Search (NL2SQL), Search History audit logs, and Deep Research (DR) sessions with persistent memory.
 
 Repo structure and roles
@@ -20,9 +20,9 @@ Repo structure and roles
 
 - search-app/: Application stack
 
-  - pyproject.toml: Python 3.10+ with FastAPI, uvicorn, psycopg3 + pool, sentence-transformers, OCI SDK, Jinja2, and optional extras (pymupdf, pdfplumber). Entrypoint script: searchapp -> app.main:main.
+  - pyproject.toml: Python 3.14.6 exactly, with FastAPI, uvicorn, psycopg3 + pool, sentence-transformers, OCI SDK, Jinja2, CPU-only PyTorch, and optional extras (pymupdf, pdfplumber). Deployments use the exact interpreter pinned in `.python-version`. Entrypoint script: searchapp -> app.main:main.
 
-  - run.sh: Convenience runner (loads .env, uv sync --extra pdf, then uv run searchapp).
+  - run.sh: Idempotent runner that installs missing pinned Linux runtime/model components on first use, preloads an installed-but-unloaded Ollama model, syncs the committed lock with PDF/image extras, then starts the app without re-resolving dependencies.
 
   - .env.example: Full set of knobs (DB, security, embeddings, pgvector, FTS, storage backend local/oci/both with bucket name, LLM provider and OCI credentials, chunking sizes). Note: contains placeholder DB credentials – change before real use.
 
@@ -43,7 +43,7 @@ Repo structure and roles
       - POST /api/search: accepts {query, mode: semantic|fulltext|hybrid|rag, top_k}. For rag, returns answer + hits + references (file name/type, chunk anchor, and object URL when present).
       - Deep Research: /api/deep-research/start, /api/deep-research/ask, /api/deep-research/conversations, /api/deep-research/notebook/{conversation_id}.
       - Search history: /api/search-history and /api/search-history/{session_id}.
-      - GET/POST /api/llm-debug and POST /api/llm-test: connectivity and response-shape diagnostics for OCI GenAI or OpenAI.
+      - POST /api/llm-test: shared-provider connectivity diagnostic (Ollama by default); GET/POST /api/llm-debug remains an OCI-specific compatibility diagnostic.
       - GET /api/llm-config: masked snapshot of LLM-related configuration.
 
   - app/config.py: Settings source from env/.env with sane defaults. Key fields:
@@ -51,7 +51,7 @@ Repo structure and roles
     - DB via DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD, plus pool sizes and sslmode.
     - Embeddings model/dim/batch, pgvector metric/lists/probes, FTS config.
     - Storage: local/oci/both, paths (storage/uploads), max upload size, delete_uploaded_after_ingest, OCI bucket and credentials.
-    - LLM: provider openai|oci|none, plus OpenAI key/model or OCI GenAI endpoint/region/compartment/model id and auth (config file or API key envs).
+    - LLM: provider ollama|openai|oci|bedrock|none. Ollama defaults to loopback with a pinned Q4_K_M Granite model; hosted-provider credentials are optional.
 
   - app/db.py: psycopg3 pool and idempotent DB init:
 
@@ -80,7 +80,7 @@ Repo structure and roles
     - Semantic: vector ANN search via pgvector distance operators (<=> cosine, <-> l2, <#> ip) with ivfflat.probes set.
     - Full-text: ts_rank_cd over generated content_tsv with plainto_tsquery.
     - Hybrid: simple Reciprocal Rank Fusion across semantic and FTS lists.
-    - RAG: builds context from top_k hits and calls either OpenAI or OCI GenAI; returns answer, hits, flag for used_llm.
+    - RAG: relevance-filters and de-duplicates up to six hits, builds bounded numbered source blocks, and calls the shared LLM client; returns answer, hits, and used_llm. Model failure never substitutes raw context as an answer.
 
   - app/store.py: File storage and ingestion
 
@@ -116,7 +116,7 @@ Data model and flow
   - semantic: query embed → vector ANN search via pgvector, ordering by distance.
   - fulltext: tsquery against content_tsv with GIN, ranked.
   - hybrid: RRF fusion of the above.
-  - rag: perform hybrid/selected search → assemble context → call LLM (OCI or OpenAI) → return synthesized answer with references to top chunks/files. References include file_name/type and optional Object Storage link.
+  - rag: perform hybrid/selected search → relevance filter → assemble bounded numbered context → call local Ollama by default → return a cited synthesized answer with references to top chunks/files. References include file_name/type and optional Object Storage link.
     - Deep Research and SQL Search now share the persistent memory store for retrieval augmentation.
 
 Persistent memory + session activity flow
@@ -158,9 +158,9 @@ Configuration and deployment
     - EMBEDDING_MODEL and EMBEDDING_DIM must match (MiniLM-L6-v2 -> 384).
     - PGVECTOR_*: metric, lists (for dataset size), probes.
     - STORAGE_BACKEND: local|oci|both; OCI_OS_BUCKET_NAME required for oci/both and OCI credentials available.
-    - LLM_PROVIDER: oci or openai + credentials (OCI: region + endpoint + compartment + model id).
+    - LLM_PROVIDER: ollama by default; OLLAMA_BASE_URL, exact OLLAMA_MODEL/digest, timeout/context controls. OCI/OpenAI/Bedrock remain opt-in.
 
-  - Run: ./run.sh or uv sync --extra pdf && uv run searchapp (available at [http://0.0.0.0:8000](http://0.0.0.0:8000)).
+  - Run: `./run.sh` performs first-use setup and launches the app (available at [http://0.0.0.0:8000](http://0.0.0.0:8000)); use `./start.sh` for later background starts. Ollama listens only on 127.0.0.1:11434 and must not receive a public ingress rule.
 
 - Infrastructure:
 
@@ -196,7 +196,7 @@ How to validate quickly
 
 - Health: GET /api/health → { "status": "ok" }
 - Readiness: GET /api/ready → ensures extensions/tables/indexes exist.
-- Upload a PDF/TXT and search; try RAG mode if OCI/OpenAI creds are configured.
+- Upload a PDF/TXT and search; RAG uses the locally installed Ollama model without hosted-LLM credentials.
 - LLM test: POST /api/llm-test with {question, context}; check chat_ok/text_ok for OCI path diagnostics.
 
 Relationship to third_party/auslegalsearch

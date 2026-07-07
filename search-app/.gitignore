@@ -1,6 +1,5 @@
 __pycache__
-.python-version
 .venv
+.env
 storage/
 .DS_Store
-uv.lock

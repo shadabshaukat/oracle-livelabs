@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from .config import settings
 from .db import get_conn
 from .embeddings import embed_texts
+from .llm import chat as llm_chat
 from .pgvector_utils import to_vec_literal
-from .oci_llm import oci_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -30,39 +30,21 @@ def _summarize_memory_text(text: str, max_chars: int) -> str:
     trimmed = text.strip()
     if len(trimmed) <= max_chars:
         return trimmed
-    if settings.llm_provider == "openai" and settings.openai_api_key:
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=settings.openai_api_key)
-            prompt = (
-                "Summarize the following memory into a concise, factual recap suitable for SQL/Search context. "
-                f"Limit to {max_chars} characters.\n\n"
-                f"Memory:\n{trimmed[:12000]}"
-            )
-            resp = client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=400,
-            )
-            out = (resp.choices[0].message.content or "").strip()
-            if out:
-                return out[:max_chars]
-        except Exception:
-            pass
-    if settings.llm_provider == "oci":
-        try:
-            prompt = (
-                "Summarize the following memory into a concise, factual recap suitable for SQL/Search context. "
-                f"Limit to {max_chars} characters."
-            )
-            out = oci_chat_completion(prompt, trimmed[:12000]) or ""
-            out = out.strip()
-            if out:
-                return out[:max_chars]
-        except Exception:
-            pass
+    try:
+        prompt = (
+            "Summarize this memory into a concise, factual recap suitable for SQL/Search context. "
+            f"Limit the result to {max_chars} characters.\n\nMemory:\n{trimmed[:12000]}"
+        )
+        out = llm_chat(
+            prompt,
+            "",
+            max_tokens=400,
+            temperature=0.1,
+        ) or ""
+        if out.strip():
+            return out.strip()[:max_chars]
+    except Exception:
+        logger.exception("Memory summarization failed")
     return trimmed[:max_chars]
 
 

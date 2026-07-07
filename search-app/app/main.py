@@ -21,7 +21,7 @@ import uvicorn
 
 from .auth import SessionOrBasicAuthMiddleware
 from .config import settings
-from .db import init_db_with_retry, get_conn
+from .db import close_pool, init_db_with_retry, get_conn
 from .store import ensure_dirs, ingest_file_path, save_upload
 from .object_storage import default_object_bucket, get_object_store, resolve_object_provider
 from .search import semantic_search, fulltext_search, hybrid_search, rag, image_search
@@ -29,7 +29,7 @@ from .embeddings import get_model, embed_texts
 from .session import get_current_user, sign_session, set_session_cookie_headers, clear_session_cookie_headers, generate_session_id
 from .users import create_user, authenticate_user, list_spaces, get_default_space_id, create_space, set_default_space, get_user_by_id
 from .vision_embeddings import embed_image_paths, embed_image_texts, VisionModelUnavailable
-from .oci_llm import oci_chat_completion
+from .llm import chat as llm_chat
 from .deep_research import start_conversation as dr_start, ask as dr_ask
 from .deep_research_store import (
     list_conversations as dr_list_conversations,
@@ -86,6 +86,11 @@ def on_startup():
     except Exception as e:
         logger.exception("Failed to preload embeddings model: %s", e)
     logger.info("Startup complete: directories ensured and database initialized")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    close_pool()
 
 
 # UI route (minimalist, responsive search app)
@@ -278,7 +283,16 @@ def db_info():
 
 @app.get("/api/ready")
 def ready():
-    checks = {"extensions": False, "users": False, "spaces": False, "documents_table": False, "chunks_table": False, "tsv_index": False, "vec_index": False}
+    checks = {
+        "extensions": False,
+        "users": False,
+        "spaces": False,
+        "documents_table": False,
+        "chunks_table": False,
+        "tsv_index": False,
+        "vec_index": False,
+        "ollama": settings.llm_provider.lower() != "ollama",
+    }
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -293,10 +307,29 @@ def ready():
                 checks["tsv_index"] = bool(cur.fetchone()[0])
                 cur.execute("SELECT to_regclass('public.idx_chunks_embedding_ivfflat') IS NOT NULL")
                 checks["vec_index"] = bool(cur.fetchone()[0])
+        if settings.llm_provider.lower() == "ollama":
+            import requests  # type: ignore
+
+            base_url = settings.ollama_base_url.rstrip("/")
+            version_response = requests.get(f"{base_url}/api/version", timeout=(2, 3))
+            version_response.raise_for_status()
+            version_ok = version_response.json().get("version") == settings.ollama_version
+            tags_response = requests.get(f"{base_url}/api/tags", timeout=(2, 3))
+            tags_response.raise_for_status()
+            model_ok = any(
+                item.get("name") == settings.ollama_model
+                and item.get("digest") == settings.ollama_model_digest
+                for item in (tags_response.json().get("models") or [])
+                if isinstance(item, dict)
+            )
+            checks["ollama"] = bool(version_ok and model_ok)
         ready_status = all(val for key, val in checks.items() if key != "database")
-        return {"ready": ready_status, **checks}
+        payload = {"ready": ready_status, **checks}
+        if ready_status:
+            return payload
+        return JSONResponse(status_code=503, content=payload)
     except Exception as e:
-        return {"ready": False, "error": str(e), **checks}
+        return JSONResponse(status_code=503, content={"ready": False, "error": str(e), **checks})
 
 
 @app.get("/api/chunks-preview")
@@ -456,7 +489,12 @@ async def api_search(request: Request, payload: Dict[str, Any]):
     sid = int(sid) if sid is not None else get_default_space_id(uid)
     q = payload.get("query", "")
     mode = str(payload.get("mode", "hybrid")).lower()
-    top_k = int(payload.get("top_k", 25))
+    try:
+        top_k = max(1, min(int(payload.get("top_k", 25)), 50))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "top_k must be an integer"})
+    if mode == "rag":
+        top_k = min(top_k, max(1, int(settings.rag_top_k)))
     persistent_memory_requested = _extract_bool(payload.get("persistent_memory"))
     persistent_memory_enabled = bool(settings.text_persistent_memory_enabled and persistent_memory_requested)
     if not q:
@@ -537,7 +575,7 @@ async def api_search(request: Request, payload: Dict[str, Any]):
         out["llm_response"] = answer if used_llm else ""
         # Include top references for UI (file name/type and chunk anchor)
         refs = []
-        for e in hits_out[: min(len(hits_out), 5)]:
+        for e in hits_out[: min(len(hits_out), max(1, int(settings.rag_top_k)))]:
             doc_id = e.get("document_id")
             refs.append({
                 "file_name": e.get("file_name") or e.get("title") or "",
@@ -547,7 +585,7 @@ async def api_search(request: Request, payload: Dict[str, Any]):
                 "url": f"/api/doc-download?doc_id={doc_id}" if doc_id is not None else None,
             })
         out["references"] = refs
-    if persistent_memory_enabled:
+    if persistent_memory_enabled and (mode != "rag" or used_llm):
         response_text = answer or ""
         if not response_text:
             snippets = [h.content[:400] for h in hits[:3] if h.content]
@@ -1490,40 +1528,16 @@ async def llm_test(payload: Dict[str, Any] | None = None):
     chat_ok: bool = False
     text_ok: bool = False
     try:
-        if provider == "openai" and settings.openai_api_key:
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=settings.openai_api_key)
-                prompt = (
-                    "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
-                    f"Question: {q}\n\nContext:\n{ctx[:12000]}"
-                )
-                resp = client.chat.completions.create(
-                    model=settings.openai_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    max_tokens=256,
-                )
-                answer = resp.choices[0].message.content
-            except Exception as e:
-                error = str(e)
-        elif provider == "oci":
-            try:
-                from .oci_llm import (
-                    oci_chat_completion,
-                    oci_chat_completion_chat_only,
-                    oci_chat_completion_text_only,
-                )
-                # Probe both paths for diagnostics
-                ans_chat = oci_chat_completion_chat_only(q, ctx)
-                ans_text = oci_chat_completion_text_only(q, ctx)
-                chat_ok = bool(ans_chat)
-                text_ok = bool(ans_text)
-                answer = ans_chat or ans_text or oci_chat_completion(q, ctx)
-            except Exception as e:
-                error = str(e)
-        else:
-            error = "LLM provider inactive or missing credentials"
+        answer = llm_chat(
+            str(q),
+            str(ctx),
+            max_tokens=256,
+            temperature=0.1,
+            cache_answer=False,
+        )
+        chat_ok = bool(answer)
+        if not answer:
+            error = "The configured LLM provider returned no answer; check its service, model, and credentials."
     except Exception as e:
         error = str(e)
 
@@ -1794,6 +1808,10 @@ def llm_config():
 
     return {
         "provider": settings.llm_provider,
+        "ollama_base_url": settings.ollama_base_url,
+        "ollama_model": settings.ollama_model,
+        "ollama_model_digest": settings.ollama_model_digest,
+        "ollama_num_ctx": settings.ollama_num_ctx,
         "oci_region": settings.oci_region,
         "oci_genai_endpoint": settings.oci_genai_endpoint,
         "compartment_id_present": bool(settings.oci_compartment_id),
@@ -2322,23 +2340,12 @@ def _select_relevant_tables(
         f"{table_list}\n\n"
         "Return ONLY table names or ALL."
     )
-    content = ""
-    if settings.llm_provider == "openai" and settings.openai_api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
-        resp = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[{"role": "user", "content": selection_prompt}],
-            temperature=0.0,
-            max_tokens=200,
-        )
-        content = resp.choices[0].message.content or ""
-    elif settings.llm_provider == "oci":
-        content = oci_chat_completion(
-            "Select relevant tables for the question. Return ONLY table names or ALL.",
-            selection_prompt,
-        ) or ""
+    content = llm_chat(
+        selection_prompt,
+        "",
+        max_tokens=200,
+        temperature=0.0,
+    ) or ""
     raw = content.strip()
     if not raw:
         return set()
@@ -2547,42 +2554,15 @@ def _generate_sql(
         f"Question: {question}\n\n"
         "Return ONLY SQL."
     )
-    if settings.llm_provider == "openai" and settings.openai_api_key:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
-        resp = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=400,
-        )
-        content = resp.choices[0].message.content or ""
-        return _extract_sql_from_llm(content), content
-    if settings.llm_provider == "oci":
-        question_prompt = (
-            "Generate a single PostgreSQL SELECT query for the user question. "
-            "Return ONLY SQL without explanations."
-        )
-        context = (
-            f"System: {system_prompt}\n"
-            f"Allowed tables: {allowed_note}.\n"
-            f"{role_note}\n"
-            f"{monitoring_guidance}\n"
-            f"{guardrails}\n"
-            f"{persistent_note}"
-            f"{agentic_feedback_note}"
-            f"{column_grounding_note}"
-            f"{fk_hints_note}"
-            f"{row_samples_note}"
-            f"{conversation_memory_note}"
-            f"Schema:\n{schema}\n\n"
-            f"DDL:\n{ddl}\n\n"
-            f"User question: {question}"
-        )
-        content = oci_chat_completion(question_prompt, context) or ""
-        return _extract_sql_from_llm(content), content
-    raise ValueError("LLM provider not configured")
+    content = llm_chat(
+        prompt,
+        "",
+        max_tokens=400,
+        temperature=0.1,
+    ) or ""
+    if not content:
+        raise ValueError("Configured LLM provider returned no SQL response")
+    return _extract_sql_from_llm(content), content
 
 
 def _extract_cte_names(sql: str) -> set[str]:

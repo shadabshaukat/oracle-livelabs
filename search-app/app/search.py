@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .config import settings
 from .db import get_conn, set_search_runtime
 from .embeddings import embed_texts
+from .llm import chat as llm_chat
 from .pgvector_utils import to_vec_literal
 
 logger = logging.getLogger(__name__)
@@ -110,19 +111,81 @@ def hybrid_search(query: str, top_k: int = 10, alpha: float = 0.5, *, user_id: O
     fts = fulltext_search(query, top_k=top_k, user_id=user_id, space_id=space_id)
 
     k = 60.0
+    semantic_weight = min(1.0, max(0.0, float(alpha)))
+    lexical_weight = 1.0 - semantic_weight
     scores: Dict[int, float] = {}
     payload: Dict[int, ChunkHit] = {}
 
     for rank, hit in enumerate(sem, start=1):
-        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + 1.0 / (k + rank)
+        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + semantic_weight / (k + rank)
         payload[hit.chunk_id] = hit
     for rank, hit in enumerate(fts, start=1):
-        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + 1.0 / (k + rank)
-        payload[hit.chunk_id] = payload.get(hit.chunk_id, hit)
+        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + lexical_weight / (k + rank)
+        existing = payload.get(hit.chunk_id)
+        if existing is not None:
+            existing.rank = hit.rank
+        else:
+            payload[hit.chunk_id] = hit
 
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
     out: List[ChunkHit] = [payload[cid] for cid, _ in ranked]
     return out
+
+
+def _filter_rag_hits(hits: List[ChunkHit]) -> List[ChunkHit]:
+    """Drop weak cosine-only matches and duplicate text before LLM synthesis."""
+    filtered: List[ChunkHit] = []
+    seen_content: set[str] = set()
+    for hit in hits:
+        lexical_match = hit.rank is not None and hit.rank > 0
+        semantic_match = hit.distance is not None
+        if settings.pgvector_metric.lower() == "cosine" and semantic_match and not lexical_match:
+            if float(hit.distance) > float(settings.rag_max_cosine_distance):
+                continue
+        elif not lexical_match and not semantic_match:
+            continue
+        normalized = " ".join((hit.content or "").lower().split())
+        if not normalized:
+            continue
+        dedupe_key = normalized[:500]
+        if dedupe_key in seen_content:
+            continue
+        seen_content.add(dedupe_key)
+        filtered.append(hit)
+    return filtered
+
+
+def _build_rag_context(hits: List[ChunkHit], memory_context: Optional[str] = None) -> str:
+    """Build numbered, fairly sized source blocks within a hard character budget."""
+    max_chars = max(500, int(settings.rag_max_context_chars))
+    parts: List[str] = []
+    used = 0
+
+    memory = (memory_context or "").strip()
+    if memory:
+        memory_budget = min(len(memory), max_chars // 5)
+        memory_block = f"[Conversation memory - not a source]\n{memory[:memory_budget]}"
+        parts.append(memory_block)
+        used += len(memory_block) + 2
+
+    for index, hit in enumerate(hits, start=1):
+        remaining_sources = len(hits) - index + 1
+        remaining_budget = max_chars - used
+        if remaining_budget <= 0:
+            break
+        fair_share = max(1, remaining_budget // max(1, remaining_sources))
+        header = f"[Source {index}]\n"
+        content_limit = max(0, fair_share - len(header) - 2)
+        content = (hit.content or "").strip()[:content_limit]
+        if not content:
+            continue
+        block = header + content
+        if len(block) > remaining_budget:
+            block = block[:remaining_budget]
+        parts.append(block)
+        used += len(block) + 2
+
+    return "\n\n".join(parts)[:max_chars]
 
 
 def rag(
@@ -135,6 +198,7 @@ def rag(
     memory_context: Optional[str] = None,
     return_timings: bool = False,
 ) -> Tuple[str, List[ChunkHit], bool] | Tuple[str, List[ChunkHit], bool, Dict[str, Optional[int]]]:
+    top_k = max(1, min(int(top_k), max(1, int(settings.rag_top_k))))
     logger.info("rag: query=%r mode=%s top_k=%s provider=%s", query, mode, top_k, settings.llm_provider)
     mode = mode.lower()
     db_start = perf_counter()
@@ -146,51 +210,37 @@ def rag(
         hits = hybrid_search(query, top_k=top_k, user_id=user_id, space_id=space_id)
     db_ms = int(round((perf_counter() - db_start) * 1000))
 
-    context = "\n\n".join(h.content for h in hits)
-    if memory_context:
-        context = f"Memory context:\n{memory_context}\n\n{context}"
+    hits = _filter_rag_hits(hits)[:top_k]
+    context = _build_rag_context(hits, memory_context)
     logger.info("rag: context_chars=%d hits=%d", len(context), len(hits))
 
-    answer = context
+    answer = ""
     used_llm = False
 
     llm_ms: Optional[int] = None
-    if settings.llm_provider == "openai" and settings.openai_api_key:
+    if not hits:
+        answer = "I couldn't find sufficiently relevant information in the indexed documents to answer that question."
+    else:
         try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=settings.openai_api_key)
-            prompt = (
-                "You are a helpful assistant. Using the provided context, answer the question concisely.\n\n"
-                f"Question: {query}\n\nContext:\n{context[:12000]}"
-            )
-            logger.info("rag: calling OpenAI model=%s prompt_chars=%d", settings.openai_model, len(prompt))
             llm_start = perf_counter()
-            resp = client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+            out = llm_chat(
+                query,
+                context,
                 max_tokens=settings.rag_max_tokens,
+                temperature=0.1,
             )
             llm_ms = int(round((perf_counter() - llm_start) * 1000))
-            out = resp.choices[0].message.content
             if out:
                 answer = out
                 used_llm = True
         except Exception as e:
-            logger.exception("LLM call failed: %s", e)
-    elif settings.llm_provider == "oci":
-        try:
-            from .oci_llm import oci_chat_completion
-            logger.info("rag: calling OCI GenAI")
-            llm_start = perf_counter()
-            out = oci_chat_completion(query, context, max_tokens=settings.rag_max_tokens)
             llm_ms = int(round((perf_counter() - llm_start) * 1000))
-            if out:
-                answer = out
-                used_llm = True
-        except Exception as e:
-            logger.exception("OCI LLM call failed: %s", e)
+            logger.exception("RAG answer synthesis failed: %s", e)
+        if not used_llm:
+            answer = (
+                "I found relevant sources, but the configured answer model is unavailable. "
+                "Verify that Ollama and the pinned local model are running, then try again."
+            )
 
     logger.info("rag: answer_chars=%d", len(answer or ''))
     if return_timings:

@@ -295,7 +295,13 @@ def extract_text_from_pdf(path: str) -> str:
     candidates = [t for t in [text_pymupdf, text_plumb, text_pypdf] if t and t.strip()]
     best_text = max(candidates, key=lambda t: len(t.strip()), default="")
 
-    if settings.ocr_pdf_enabled:
+    # OCR is a fallback for scanned/sparse PDFs. Appending OCR to already-good
+    # native text duplicates content and lowers retrieval quality.
+    should_try_ocr = (
+        settings.ocr_pdf_enabled
+        and len((best_text or "").strip()) < max(1, int(settings.pdf_ocr_fallback_min_chars))
+    )
+    if should_try_ocr:
         try:
             ocr_text = _ocr_pdf_pages(path)
         except Exception as exc:
@@ -754,7 +760,7 @@ def _apply_overlap(chunks: List[str], overlap: int) -> List[str]:
     prev_tail = ""
     for ch in chunks:
         prefix = prev_tail
-        combined = (prefix + ch) if prefix else ch
+        combined = f"{prefix}\n\n{ch}" if prefix else ch
         out.append(combined)
         prev_tail = ch[-overlap:]
     return out

@@ -64,10 +64,12 @@ class Settings:
     allow_registration: bool = _get_bool("ALLOW_REGISTRATION", True)
 
     # Chunking
-    chunk_size: int = int(os.getenv("CHUNK_SIZE", "2500"))
-    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "250"))
+    # Keep chunks inside the effective input window of all-MiniLM-L6-v2.
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "150"))
     chunk_strategy: str = os.getenv("CHUNK_STRATEGY", "recursive").lower()
-    sentence_splitter: str = os.getenv("SENTENCE_SPLITTER", "nltk").lower()
+    # Regex is deterministic and does not download mutable NLTK data at runtime.
+    sentence_splitter: str = os.getenv("SENTENCE_SPLITTER", "regex").lower()
 
     # Database (OCI PostgreSQL)
     database_url: Optional[str] = os.getenv("DATABASE_URL")
@@ -93,6 +95,10 @@ class Settings:
 
     # Embeddings
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    embedding_model_revision: str = os.getenv(
+        "EMBEDDING_MODEL_REVISION",
+        "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    )
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "384"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH", "64"))
 
@@ -122,6 +128,7 @@ class Settings:
     ocr_tesseract_cmd: Optional[str] = os.getenv("OCR_TESSERACT_CMD")
     ocr_min_chars: int = int(os.getenv("OCR_MIN_CHARS", "12"))
     ocr_max_chars: int = int(os.getenv("OCR_MAX_CHARS", "8000"))
+    pdf_ocr_fallback_min_chars: int = int(os.getenv("PDF_OCR_FALLBACK_MIN_CHARS", "200"))
     # DOC/DOCX/PPTX extraction guardrails (latency control for media-heavy docs)
     doc_subprocess_extract_timeout_s: int = int(os.getenv("DOC_SUBPROCESS_EXTRACT_TIMEOUT_S", "25"))
     embedded_ocr_max_images: int = int(os.getenv("EMBEDDED_OCR_MAX_IMAGES", "12"))
@@ -145,19 +152,31 @@ class Settings:
     basic_auth_user: str = os.getenv("BASIC_AUTH_USER", "admin")
     basic_auth_password: str = os.getenv("BASIC_AUTH_PASSWORD", "changeme")
 
-    # RAG/LLM (optional)
-    llm_provider: str = os.getenv("LLM_PROVIDER", "none")  # none|openai|oci
+    # RAG/LLM. Local Ollama is the default; hosted providers remain optional.
+    llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")  # ollama|none|openai|oci|bedrock
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "1024"))
+    rag_max_tokens: int = int(os.getenv("RAG_MAX_TOKENS", "512"))
+    rag_top_k: int = int(os.getenv("RAG_TOP_K", "6"))
+    rag_max_context_chars: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "7000"))
+    rag_max_cosine_distance: float = float(os.getenv("RAG_MAX_COSINE_DISTANCE", "0.65"))
 
     # AWS Bedrock (optional)
     aws_region: Optional[str] = os.getenv("AWS_REGION")
     aws_bedrock_model_id: Optional[str] = os.getenv("AWS_BEDROCK_MODEL_ID")
 
-    # Ollama (optional)
-    ollama_host: Optional[str] = os.getenv("OLLAMA_HOST")
-    ollama_model: Optional[str] = os.getenv("OLLAMA_MODEL")
+    # Ollama local inference. OLLAMA_HOST belongs to the daemon and intentionally
+    # is not an app alias; startup and inference both use this URL setting.
+    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "ibm/granite4:1b-q4_K_M")
+    ollama_model_digest: str = os.getenv(
+        "OLLAMA_MODEL_DIGEST",
+        "2ab52bcf721423ba9f96d63f618716006228572ec71eac43ad7187ec654af824",
+    )
+    ollama_version: str = os.getenv("OLLAMA_VERSION", "0.31.1")
+    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+    ollama_keep_alive: str = os.getenv("OLLAMA_KEEP_ALIVE", "-1")
+    ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
 
     # OCI configuration
     oci_region: Optional[str] = os.getenv("OCI_REGION")

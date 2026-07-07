@@ -1,0 +1,33 @@
+[Unit]
+Description=Ollama local inference service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ollama
+Group=ollama
+Environment="HOME=/var/lib/ollama"
+Environment="OLLAMA_HOST=127.0.0.1:11434"
+Environment="OLLAMA_MODELS=/var/lib/ollama/models"
+Environment="OLLAMA_NO_CLOUD=1"
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+ExecStart=/usr/local/bin/ollama serve
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+UMask=0027
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

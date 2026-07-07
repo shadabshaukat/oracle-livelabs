@@ -8,7 +8,7 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 - Designed to scale to ~10M embeddings with IVFFlat and tunable params
 - Multi-user accounts with per-user spaces and session cookie auth
 - Image search with OpenCLIP embeddings stored in PostgreSQL
-- One-command deployment using uv (creates/uses a virtual environment)
+- Reproducible Linux bootstrap for pinned uv, Python, Ollama, model digest, and Python dependency lock
 
 ## Features
 
@@ -17,8 +17,8 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 - Search modes:
   - Semantic (pgvector cosine/L2/IP)
   - Full-text (PostgreSQL FTS using GIN index)
-  - Hybrid (RRF fusion over semantic + FTS)
-  - RAG (optional LLM synthesis; OpenAI or OCI GenAI supported)
+  - Hybrid (weighted RRF fusion over semantic + FTS)
+  - RAG (local Ollama synthesis by default; optional hosted providers remain supported)
 - Image search (OpenCLIP + pgvector) with optional text+tag filtering
 - Deep Research mode with persistent conversations, notebook, follow-ups, and optional web search
 - Robust schema and indexes:
@@ -33,8 +33,8 @@ An enterprise-grade, self-hosted search and RAG application featuring:
 2) **Embedding** (semantic): query embedded with `EMBEDDING_MODEL`.
 3) **Vector search**: pgvector ANN query (IVFFlat + metric) returns top_k chunks.
 4) **Full‑text search**: PostgreSQL `tsvector` + `ts_rank_cd` (GIN) returns top_k chunks.
-5) **Hybrid**: Reciprocal Rank Fusion merges semantic + FTS into a ranked list.
-6) **RAG**: Top chunks become context; OCI GenAI/OpenAI synthesizes answer. References contain file name/type + optional Object Storage URL.
+5) **Hybrid**: Weighted Reciprocal Rank Fusion merges semantic + FTS and preserves both vector distance and lexical rank.
+6) **RAG**: Weak cosine-only hits are filtered, duplicate text is removed, and up to six numbered source blocks are sent to the pinned local model. The answer cites sources; raw chunks are never returned as an answer when inference fails.
 
 ### Image Search Pipeline
 1) **Query intake**: `/api/image-search` accepts text, tags, or a reference image.
@@ -116,9 +116,9 @@ flowchart TD
 
 ## Requirements
 
-- Linux x86_64 (Oracle Linux 8 recommended)
-- Python 3.10+
-- uv package manager (https://docs.astral.sh/uv/)
+- Linux x86_64 or ARM64 with systemd (Oracle Linux 9 or a comparable distribution)
+- 2-4 OCPUs, at least 8 GB RAM, and at least 8 GB free disk
+- `sudo`, `curl`, GNU tar, `sha256sum`, `ss`, and `flock` (util-linux)
 - OCI PostgreSQL reachable from the host
 - pgvector extension enabled (the app will create it if permitted)
 
@@ -128,16 +128,33 @@ flowchart TD
 
 ```bash
 cp .env.example .env
-# Edit DB connection and BASIC_AUTH/OCI values
+# Edit DB connection and application secrets. Ollama values are already pinned.
 ```
 
-2) Install deps and run server (uv will create/use a project virtual environment):
+2) Install anything missing and run the server:
 
 ```bash
-uv sync && uv run searchapp
+./run.sh
 ```
 
 This starts FastAPI at http://0.0.0.0:8000. The UI is available at http://0.0.0.0:8000/
+
+`run.sh` automatically invokes the pinned bootstrap when uv, managed Python, Ollama, or the model is missing. On
+consecutive runs it skips bootstrap, service restart, registry access, and model pull. If the exact model is
+installed but absent from `/api/ps`, it is preloaded; if already resident, no inference request is sent.
+
+### Rebuild and upgrade policy
+
+```bash
+./stop.sh
+CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh
+./start.sh
+```
+
+Do not use `latest`, plain `pip install`, or `uv lock --upgrade` in deployment. A deliberate upgrade must update
+`deploy/versions.env`, the matching binary/model checksums, `pyproject.toml` plus `uv.lock`, and then pass the clean
+end-to-end PDF RAG test. Existing documents must be re-ingested to benefit from changed chunking defaults; the
+embedding revision remains pinned to the revision used by existing stored vectors.
 
 ## Fresh Database Bootstrap (V3 schema)
 
@@ -159,15 +176,11 @@ psql "$DATABASE_URL" \
   -f schema_v3.sql
 ```
 
-## Oracle Linux 8 prerequisites and firewall
+## Oracle Linux prerequisites and firewall
 
 ```bash
 # Install OS packages
 sudo dnf install -y curl git unzip firewalld oraclelinux-developer-release-el10 python3-oci-cli postgresql16
-
-# Install uv (user-local) and add to PATH
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
 
 # Enable firewall and open port 8000/tcp for the app
 sudo systemctl enable --now firewalld
@@ -175,13 +188,17 @@ sudo firewall-cmd --permanent --add-port=8000/tcp
 sudo firewall-cmd --reload
 ```
 
+Do **not** open TCP 11434. Ollama is installed as a system service bound only to `127.0.0.1:11434`; its local API
+has no authentication. The app reaches it over loopback, so no OCI NSG/security-list or firewalld ingress rule is
+required. Outbound HTTPS is required during bootstrap to fetch checksum-verified artifacts and model blobs.
+
 ## Configuration
 
 Environment variables (see .env.example):
 - DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD
 - Security: BASIC_AUTH_USER, BASIC_AUTH_PASSWORD (protects /api for non-session use)
 - Session auth for UI login/register: SECRET_KEY, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS, COOKIE_SAMESITE, COOKIE_SECURE, ALLOW_REGISTRATION
-- EMBEDDING_MODEL, EMBEDDING_DIM (default MiniLM 384)
+- EMBEDDING_MODEL, immutable EMBEDDING_MODEL_REVISION, EMBEDDING_DIM (default MiniLM 384)
 - PGVECTOR_METRIC (cosine|l2|ip), PGVECTOR_LISTS (~sqrt(n)), PGVECTOR_PROBES (runtime probes)
 - FTS_CONFIG (default english)
 - Image search:
@@ -200,8 +217,11 @@ Environment variables (see .env.example):
   - MAX_FILES_PER_SPACE (maximum files in a space)
   - ALLOWED_UPLOAD_EXTENSIONS (comma-separated allowlist; blank allows all)
 - RAG LLM provider:
-  - OpenAI: set LLM_PROVIDER=openai and OPENAI_API_KEY
-  - OCI GenAI (preferred for this app): set LLM_PROVIDER=oci and configure:
+  - Default: `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+  - Pinned model: `ibm/granite4:1b-q4_K_M`, manifest digest in `deploy/versions.env`
+  - The app uses `/api/chat`, an 8K runtime context, one local parallel request, and a 300-second CPU timeout.
+  - OpenAI: set LLM_PROVIDER=openai and OPENAI_API_KEY (optional compatibility path)
+  - OCI GenAI: set LLM_PROVIDER=oci and configure (optional compatibility path):
     - OCI_REGION (e.g., us-chicago-1)
     - OCI_GENAI_ENDPOINT (e.g., https://inference.generativeai.us-chicago-1.oci.oraclecloud.com)
     - OCI_COMPARTMENT_OCID
@@ -212,13 +232,14 @@ Environment variables (see .env.example):
 
 ### Chunking Configuration
 - `CHUNK_STRATEGY=recursive|sentence_pack` controls the chunker.
-- `SENTENCE_SPLITTER=regex|nltk|spacy` selects sentence splitting behavior (default nltk).
-- `CHUNK_SIZE` and `CHUNK_OVERLAP` adjust chunk granularity.
+- `SENTENCE_SPLITTER=regex|nltk|spacy` selects sentence splitting behavior (default regex; no mutable data download).
+- Defaults are `CHUNK_SIZE=1000` and `CHUNK_OVERLAP=150`, sized for MiniLM's effective input window.
+- `OCR_PDF=true` enables OCR only as a fallback when native extraction is sparse; it no longer duplicates good PDF text.
 
 ## Endpoints
 
 - GET /api/health
-- GET /api/ready (DB readiness: checks extensions, tables, and indexes)
+- GET /api/ready (DB plus pinned Ollama version/model-digest readiness; returns HTTP 503 when not ready)
 - POST /api/upload (multipart) files[] (space_id optional)
 - POST /api/search { query, mode: semantic|fulltext|hybrid|rag, top_k, space_id }
 - POST /api/image-search (query/tags or reference image)
@@ -235,7 +256,7 @@ Environment variables (see .env.example):
 - Auth: /api/register, /api/login, /api/logout, /api/me
 - GET /api/search-history (session history with filters + pagination)
 - GET /api/search-history/{session_id} (session activity details)
-- GET /api/llm-config (OCI LLM config snapshot – provider/region/endpoint; compartment/model presence)
+- GET /api/llm-config (provider plus local Ollama version/model/digest settings; optional OCI fields)
 - POST /api/llm-test ({question, context}) – verifies LLM connectivity; returns ok + chat_ok/text_ok
 - GET/POST /api/llm-debug ({question, context}) – diagnostic shape/fields for OCI responses
 
@@ -249,15 +270,20 @@ UI
 
 Cache busting tip: Hard refresh (Shift+Reload) or open http://0.0.0.0:8000/?v=2 if you’ve just updated templates.
 
-## RAG and OCI GenAI
+## RAG and Local Ollama
 
-- This app uses the OCI Generative AI chat API with OnDemandServingMode(model_id=…). Requests include:
-  - ChatDetails(compartment_id, serving_mode)
-  - GenericChatRequest(api_format=GENERIC, messages=[SYSTEM, USER], max_tokens, temperature)
-- The SYSTEM prompt enforces: “Answer directly from the provided context. If insufficient, say ‘No answer found in the provided context.’ Do not ask for more input.”
-- The USER message contains both the question and context.
-- The app extracts text from multiple OCI response shapes, including ChatResult.chat_response.
-- A generate_text fallback is present but not required for models that prefer chat (generate_text may return 400 in those cases and is ignored).
+- `bootstrap_linux.sh` installs Ollama 0.31.1 from a fixed release asset after checking its SHA-256.
+- The default `ibm/granite4:1b-q4_K_M` model is about 1 GB, 1.63B parameters, CPU-quantized Q4_K_M,
+  Apache-2.0 licensed, and intended for question answering, summarization, and RAG.
+- The bootstrap verifies the registry manifest digest before pull and `/api/tags` afterward. If the public tag ever
+  changes, the build fails instead of silently drifting.
+- `run.sh` uses `/api/ps` to distinguish an installed model from a memory-resident model. The pinned model is kept
+  resident with `OLLAMA_KEEP_ALIVE=-1`; `OLLAMA_MAX_LOADED_MODELS=1` bounds local model memory usage.
+- Ollama uses `/api/chat` with `num_ctx=8192`, bounded output, low temperature, and thinking disabled.
+- The system prompt requires answers from numbered sources, rejects instructions embedded in documents, and asks
+  for `[Source N]` citations. An inference failure returns a short availability message while search hits remain
+  available in the References panel.
+- OCI GenAI, OpenAI, and Bedrock are still available when explicitly selected, but they are not defaults.
 
 Example LLM test (with Basic Auth):
 
@@ -271,7 +297,8 @@ Note: Avoid trailing characters after the JSON body (a trailing dot will cause 4
 
 ## Search Mode Curl Examples
 
-All search endpoints require Basic Auth and a JSON body with "query" and optional "mode" (defaults to hybrid), "top_k" (defaults to 25).
+All search endpoints require Basic Auth and a JSON body with "query" and optional "mode" (defaults to hybrid).
+RAG defaults to and is capped at `top_k=6`; non-RAG search accepts up to 50.
 
 - Semantic:
 ```bash
@@ -298,13 +325,13 @@ curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
 ```bash
 curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
   -H 'Content-Type: application/json' \
-  -d '{"query":"Tell me about MySQL HeatWave","mode":"rag","top_k":10}'
+  -d '{"query":"Tell me about MySQL HeatWave","mode":"rag","top_k":6}'
 ```
 
 ## Chunking strategy
 
 - Uses a recursive character splitter inspired by LangChain’s RecursiveCharacterTextSplitter with separators (\n\n, \n, ". ", " ", "").
-- Defaults: chunk_size=2500 and chunk_overlap=250 (tune in code or via the UI ingest parameters).
+- Defaults: chunk_size=1000 and chunk_overlap=150 (tune through the environment for future ingests).
 - The order of separators ensures we prefer paragraph and sentence boundaries before falling back to word and character splits.
 - `sentence_pack` strategy packs paragraph → sentences → chunk windows, with recursive fallback for long sentences.
 - Supports PDF, HTML, TXT, and DOCX extraction. For PDFs, you can set USE_PYMUPDF=true to prefer higher-quality extraction.
@@ -328,13 +355,14 @@ curl -u admin:letmein -sS -X POST http://0.0.0.0:8000/api/search \
 ```ini
 [Unit]
 Description=Enterprise Search App
-After=network.target
+Wants=ollama.service
+After=network.target ollama.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/search-app
 EnvironmentFile=/opt/search-app/.env
-ExecStart=/usr/bin/env uv run searchapp
+ExecStart=/opt/search-app/run.sh
 Restart=always
 User=searchapp
 Group=searchapp
@@ -348,10 +376,12 @@ WantedBy=multi-user.target
 - 422 JSON decode error from curl commands:
   - Ensure there are no trailing characters (e.g., trailing dot) after the JSON body.
 
-- LLM test ok=false or empty answer (OCI):
-  - Confirm .env has: LLM_PROVIDER=oci, region + endpoint + compartment + model ID.
-  - Verify OCI Generative AI is enabled for your tenancy/compartment in that region.
-  - Prefer chat path (generate_text may return 400 for chat-only models; that is expected and ignored).
+- LLM test ok=false or empty answer (Ollama):
+  - Confirm `.env` has `LLM_PROVIDER=ollama` and `OLLAMA_BASE_URL=http://127.0.0.1:11434`.
+  - Run `systemctl status ollama` and `journalctl -u ollama`.
+  - Run `.venv/bin/python scripts/verify_ollama.py --smoke`; it checks runtime version, full model digest,
+    Q4_K_M quantization, and inference.
+  - Confirm `ss -ltn 'sport = :11434'` shows only `127.0.0.1:11434`.
 
 - Database configuration missing at startup:
   - Ensure search-app/.env contains either DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.

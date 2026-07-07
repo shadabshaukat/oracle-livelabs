@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_model() -> SentenceTransformer:
-    logger.info("Loading embeddings model: %s", settings.embedding_model_name)
+    logger.info(
+        "Loading embeddings model: %s revision=%s",
+        settings.embedding_model_name,
+        settings.embedding_model_revision,
+    )
     # Ensure model cache directories are set for HF/Transformers
     os.makedirs(settings.model_cache_dir, exist_ok=True)
     os.environ.setdefault("HF_HOME", settings.model_cache_dir)
@@ -24,17 +28,24 @@ def get_model() -> SentenceTransformer:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
     try:
-        model = SentenceTransformer(settings.embedding_model_name, cache_folder=settings.model_cache_dir)
+        # Prefer the already verified snapshot so normal runtime never checks a
+        # mutable remote ref or needs network access.
+        model = SentenceTransformer(
+            settings.embedding_model_name,
+            cache_folder=settings.model_cache_dir,
+            revision=settings.embedding_model_revision,
+            local_files_only=True,
+        )
     except Exception as e:
-        logger.warning("Model download failed (%s). Retrying with local_files_only=True", e)
+        logger.info("Pinned embedding snapshot not cached (%s); downloading that exact revision", e)
         try:
             model = SentenceTransformer(
                 settings.embedding_model_name,
                 cache_folder=settings.model_cache_dir,
-                local_files_only=True,
+                revision=settings.embedding_model_revision,
             )
         except Exception as e2:
-            logger.exception("Failed to load embedding model offline as well: %s", e2)
+            logger.exception("Failed to load pinned embedding model revision: %s", e2)
             raise
     return model
 
@@ -56,6 +67,9 @@ def get_text_embedding_dim() -> int:
     """Return the dimensionality of the current text embedding model."""
     model = get_model()
     try:
+        getter = getattr(model, "get_embedding_dimension", None)
+        if callable(getter):
+            return int(getter())
         return int(model.get_sentence_embedding_dimension())
     except Exception:
         sample = embed_texts(["dimension probe"], batch_size=1)

@@ -578,6 +578,8 @@ def init_db_with_retry(s: Settings = settings) -> None:
 
 
 def set_search_runtime(cur: psycopg.Cursor, probes: int):
-    # SET LOCAL cannot use bind parameters for the value; interpolate safely as a literal
+    # Connections use autocommit, so SET LOCAL would expire immediately and leave
+    # the ANN query at PostgreSQL's default. Set the pooled session explicitly;
+    # every vector search calls this before executing its query.
     from psycopg import sql
-    cur.execute(sql.SQL("SET LOCAL ivfflat.probes = {}" ).format(sql.Literal(int(probes))))
+    cur.execute(sql.SQL("SET SESSION ivfflat.probes = {}" ).format(sql.Literal(int(probes))))

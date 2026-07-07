@@ -1,6 +1,6 @@
 # Search App Session Specs (Context-Recovery Document)
 
-Last updated: 2026-02-26 22:49 (AEDT)
+Last updated: 2026-07-07 (AEST)
 Scope scanned: `/Users/shadab/Downloads/oracle-livelabs/search-app`
 
 ---
@@ -47,8 +47,10 @@ Primary persistence is **PostgreSQL + pgvector** (no Redis/Valkey dependency).
 ### Scripts
 - `search-app/run.sh`
   - loads `.env`
-  - `uv sync --extra pdf --extra image`
-  - `uv run searchapp`
+  - invokes the pinned Linux bootstrap only when uv/Python/Ollama/model verification requires it
+  - verifies `/api/ps`; preloads an installed-but-unloaded model and otherwise leaves a resident model untouched
+  - `uv sync --locked --extra pdf --extra image`
+  - `uv run --locked --no-sync searchapp`
 - `search-app/start.sh`
   - starts `run.sh` in background
   - writes PID to `storage/searchapp.pid`
@@ -1789,4 +1791,25 @@ Now go go go
 - Users can see file count plus file names without layout spill.
 - Large selections remain readable via bounded list + `+more` summary behavior.
 
+## 31) Reproducible local Ollama migration (2026-07-07)
 
+- Default inference moved from OCI GenAI to loopback-only Ollama.
+- Runtime pins: uv 0.11.27, managed Python 3.14.6, Ollama 0.31.1, and
+  `ibm/granite4:1b-q4_K_M` with full manifest digest verification. Binary checksums and model pins live in
+  `search-app/deploy/versions.env`; all Python versions/artifact hashes live in committed `uv.lock`.
+- Linux uses the official CPU-only PyTorch index, removing CUDA/NVIDIA packages from the 2-4 OCPU deployment.
+- `bootstrap_linux.sh` installs checksum-verified x86_64/ARM64 artifacts, configures systemd, pulls/verifies the
+  model, validates loopback binding, runs smoke inference, and performs a locked application build.
+- `run.sh` is the first-run entrypoint: it invokes bootstrap only for missing/invalid components. Once Ollama and
+  the pinned model exist, it checks `/api/ps`; an unloaded model is preloaded with `OLLAMA_KEEP_ALIVE=-1`, while an
+  already resident model causes no service restart, registry query, pull, or inference request.
+- TCP 11434 must never be publicly whitelisted; Ollama listens only on `127.0.0.1:11434`. Only outbound HTTPS is
+  needed during build/model pull.
+- RAG now calls the shared LLM client, caps context at six relevance-filtered numbered sources, requests citations,
+  and returns explicit not-found/unavailable messages. It never emits concatenated raw chunks as an answer.
+- LLM test, NL2SQL, memory summarization, and existing Deep Research paths use the same shared provider client.
+- New ingestion defaults are 1,000-character chunks with 150-character overlap; existing documents require
+  re-ingestion to adopt them. MiniLM is pinned to revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`.
+- PDF OCR is now a sparse-text fallback instead of being appended to good native text.
+- Clean verification command:
+  `CLEAN_BUILD=1 FORCE_OLLAMA_REINSTALL=1 ./bootstrap_linux.sh`, followed by `./start.sh` and PDF RAG E2E checks.

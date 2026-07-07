@@ -3,7 +3,7 @@ name = "enterprise-searchapp"
 version = "0.1.0"
 description = "Enterprise-grade FastAPI search app with OCI PostgreSQL + pgvector backend (RAG, semantic, hybrid, full-text)"
 authors = [{ name = "Your Org", email = "devnull@example.com" }]
-requires-python = ">=3.10"
+requires-python = "==3.14.6"
 readme = "README.md"
 license = "Apache-2.0"
 
@@ -39,7 +39,13 @@ dependencies = [
 # Optional LLM providers
 openai = ["openai>=1.60.0"]
 pdf = ["pymupdf>=1.24.0", "pdfplumber>=0.11.0"]
-image = ["open-clip-torch>=2.24.0", "torch>=2.2.0", "pillow>=10.0.0", "transformers>=4.48.0"]
+image = [
+  "open-clip-torch>=2.24.0",
+  "torch>=2.2.0",
+  "torchvision>=0.20.0",
+  "pillow>=10.0.0",
+  "transformers>=4.48.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/your-org/enterprise-searchapp"
@@ -52,8 +58,20 @@ searchapp = "app.main:main"
 packages = ["app"]
 
 [tool.uv]
-# Ensure uv respects this project file for sync/install
+# Keep the resolver/tool behavior reproducible alongside the committed uv.lock.
+required-version = "==0.11.27"
 package = true
+
+# This deployment targets CPU-only 2-4 OCPU hosts. Pin the PyTorch family to
+# the official CPU index so Linux rebuilds do not pull CUDA/NVIDIA packages.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 120
